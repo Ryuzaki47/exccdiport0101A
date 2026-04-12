@@ -11,12 +11,14 @@ return new class extends Migration
         Schema::create('payments', function (Blueprint $table) {
             $table->id();
             $table->foreignId('student_id')->constrained()->onDelete('cascade');
+            $table->foreignId('transaction_id')->nullable()->constrained()->onDelete('set null');
+            $table->string('paymongo_payment_intent_id')->nullable();
+            $table->string('paymongo_checkout_session_id')->nullable();
+            $table->string('payment_method')->nullable(); // gcash, maya, card
             $table->decimal('amount', 10, 2);
-            $table->string('description');
-            $table->string('payment_method')->default('cash');
-            $table->string('reference_number')->nullable();
-            $table->string('status')->default('completed');
-            $table->timestamp('paid_at')->nullable();
+            $table->string('currency')->default('PHP');
+            $table->string('status')->default('pending'); // pending, paid, failed
+            $table->string('description')->nullable();
             $table->timestamps();
         });
     }

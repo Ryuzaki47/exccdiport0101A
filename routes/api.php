@@ -8,6 +8,11 @@ use Illuminate\Support\Facades\Route;
 Route::post('webhooks/paymongo', [PaymentController::class, 'webhook'])
     ->name('paymongo.webhook');
 
+Route::middleware('auth:sanctum')->group(function () {
+    // ── Payment routes ─────────────────────────────────────────────────────
+    Route::post('/payments/checkout', [PaymentController::class, 'createCheckout']);
+});
+
 Route::middleware('auth')->group(function () {
 
     // ── Existing Workflow routes ───────────────────────────────────────────

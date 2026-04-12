@@ -34,6 +34,10 @@ Route::get('/', function () {
 // PayMongo Webhook — No authentication required (called by PayMongo servers)
 Route::post('/webhook/paymongo', [PaymongoWebhookController::class, 'handle']);
 
+// PayMongo Redirect Routes — Payment success/cancel callbacks
+Route::get('/payment/success', [PaymentController::class, 'success'])->name('payment.success');
+Route::get('/payment/cancel', [PaymentController::class, 'cancel'])->name('payment.cancel');
+
 // ============================================
 // AUTHENTICATED ROUTES
 // ============================================
