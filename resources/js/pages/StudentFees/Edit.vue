@@ -14,7 +14,7 @@ import { BookOpen, FlaskConical, Calculator, Save, AlertTriangle } from 'lucide-
 
 interface FeeRates {
   tuition_per_lec_unit: number
-  lab_fee_per_subject: number
+  lab_fee_per_unit: number
   misc_fee_fixed: number
   payment_terms: Array<{ term_name: string; term_order: number; percentage: number }>
 }
@@ -33,7 +33,6 @@ const props = defineProps<{
     school_year: string
     lec_units: number
     lab_units: number
-    lab_subjects: number
   }
   feeRates: FeeRates
 }>()
@@ -54,11 +53,10 @@ const breadcrumbs = [
 // ─── Form ─────────────────────────────────────────────────────────────────────
 
 const form = useForm({
-  semester:     props.assessment.semester,
-  school_year:  props.assessment.school_year,
-  lec_units:    props.assessment.lec_units,
-  lab_units:    props.assessment.lab_units,
-  lab_subjects: props.assessment.lab_subjects,
+  semester:    props.assessment.semester,
+  school_year: props.assessment.school_year,
+  lec_units:   props.assessment.lec_units,
+  lab_units:   props.assessment.lab_units,
 })
 
 // ─── Live Fee Computation ─────────────────────────────────────────────────────
@@ -68,7 +66,7 @@ const tuitionFee = computed(() =>
 )
 
 const labFee = computed(() =>
-  Number(form.lab_subjects) * props.feeRates.lab_fee_per_subject
+  Number(form.lab_units) * props.feeRates.lab_fee_per_unit
 )
 
 const miscFee  = computed(() => props.feeRates.misc_fee_fixed)
@@ -178,7 +176,7 @@ function submit() {
                     <Input id="lab_units" type="number" v-model.number="form.lab_units"
                     min="0" max="10" class="text-center text-lg font-semibold" />
                     <p class="text-xs text-muted-foreground text-center">
-                    × {{ formatCurrency(feeRates.lab_fee_per_subject) }} / subject
+                    × {{ formatCurrency(feeRates.lab_fee_per_unit) }} / unit
                     </p>
                     <p v-if="form.errors.lab_units" class="text-sm text-destructive">
                     {{ form.errors.lab_units }}
@@ -222,7 +220,7 @@ function submit() {
                 <span class="font-medium">{{ formatCurrency(tuitionFee) }}</span>
               </div>
               <div class="flex justify-between">
-                <span class="text-muted-foreground">Lab Fee ({{ form.lab_subjects }} subjects)</span>
+                <span class="text-muted-foreground">Lab Fee ({{ form.lab_units }} units × {{ formatCurrency(feeRates.lab_fee_per_unit) }})</span>
                 <span class="font-medium">{{ formatCurrency(labFee) }}</span>
               </div>
               <div class="flex justify-between">

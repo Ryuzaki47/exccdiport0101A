@@ -14,6 +14,7 @@ import {
     BookOpen,
     CheckCircle2,
     ChevronDown,
+    CreditCard,
     Download,
     FlaskConical,
     Plus,
@@ -57,14 +58,14 @@ interface Assessment {
 }
 
 interface Props {
-    student: any;
-    assessment: any;
-    allAssessments: Assessment[];
-    transactions: any[];
-    payments: any[];
-    feeBreakdown: Array<{ category: string; total: number; items: number }>;
-    backUrl: string;
-    enrolledSubjectsByAssessment: Record<number, number[]>;
+    student: any
+    assessment: any
+    allAssessments?: Assessment[]
+    transactions?: any[]
+    payments?: any[]
+    feeBreakdown?: Array<{ category: string; total: number; items: number }>
+    backUrl?: string
+    enrolledSubjectsByAssessment?: Record<number, number[]>
 }
 
 const props = defineProps<Props>();
@@ -79,7 +80,7 @@ const selectedAssessmentId = ref<number | null>(props.assessment?.id ?? null);
 
 const selectedAssessment = computed(() => {
     if (!selectedAssessmentId.value) return props.assessment;
-    return props.allAssessments.find((a) => a.id === selectedAssessmentId.value) ?? props.assessment;
+    return (props.allAssessments ?? []).find((a) => a.id === selectedAssessmentId.value) ?? props.assessment;
 });
 
 const exportUrl = computed(() => {
@@ -370,20 +371,8 @@ const currentAssessmentTermKey = computed<string | null>(() => {
     return `${selectedAssessment.value.school_year} ${selectedAssessment.value.semester}`;
 });
 
-// ─── Enrolled Subjects Accordion ──────────────────────────────────────────────
-
-const enrolledSubjectsOpen = ref(false);
-const expandedSubjectTerms = ref<Set<number>>(new Set());
 // FIX #3: track which transaction-group subject panels are expanded
 const expandedTxSubjectPanels = ref<Set<string>>(new Set());
-
-function toggleSubjectTerm(assessmentId: number) {
-    if (expandedSubjectTerms.value.has(assessmentId)) {
-        expandedSubjectTerms.value.delete(assessmentId);
-    } else {
-        expandedSubjectTerms.value.add(assessmentId);
-    }
-}
 
 function toggleTxSubjectPanel(key: string) {
     if (expandedTxSubjectPanels.value.has(key)) {
@@ -473,13 +462,6 @@ function buildSubjectPanel(a: Assessment) {
     };
 }
 
-// Panels for the standalone Enrolled Subjects accordion (all assessments)
-const enrolledSubjectTerms = computed(() =>
-    props.allAssessments
-        .filter((a) => a.fee_breakdown && a.fee_breakdown.length > 0)
-        .map(buildSubjectPanel)
-        .filter((panel) => panel.subjects.length > 0),
-);
 
 // FIX #3: Per-transaction-group subject panels indexed by group key
 const txSubjectPanels = computed((): Record<string, ReturnType<typeof buildSubjectPanel> | null> => {
@@ -896,7 +878,7 @@ const getStudentStatusColor = (status: string) => {
                     </div>
                 </CardHeader>
                 <CardContent class="space-y-4">
-                    <!-- ── SECTION 1: Tuition Fees (Static) ── -->
+                    <!-- ── SECTION 1: Tuition Fees ── -->
                     <div class="flex items-center justify-between rounded-xl border border-border bg-card p-4">
                         <div>
                             <p class="font-semibold text-foreground">Tuition Fees</p>
@@ -904,7 +886,7 @@ const getStudentStatusColor = (status: string) => {
                         <span class="text-lg font-bold text-indigo-600">{{ formatCurrency(totalTuition) }}</span>
                     </div>
 
-                    <!-- ── SECTION 2: Laboratory Fees (Static) ── -->
+                    <!-- ── SECTION 2: Laboratory Fees ── -->
                     <div class="flex items-center justify-between rounded-xl border border-border bg-card p-4">
                         <div>
                             <p class="font-semibold text-foreground">Laboratory Fees</p>
@@ -1015,219 +997,6 @@ const getStudentStatusColor = (status: string) => {
                     </div>
                 </CardContent>
             </Card>
-
-            <!-- ════════════════════════════════════════════════════════════════
-                 ── ENROLLED SUBJECTS ACCORDION ──────────────────────────────
-                 ════════════════════════════════════════════════════════════════ -->
-            <div class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-                <button
-                    type="button"
-                    class="flex w-full cursor-pointer items-center justify-between px-6 py-4 transition-colors select-none hover:bg-gray-50"
-                    @click="enrolledSubjectsOpen = !enrolledSubjectsOpen"
-                >
-                    <div class="flex items-center gap-3">
-                        <div class="rounded-lg bg-indigo-100 p-2">
-                            <BookOpen class="h-4 w-4 text-indigo-600" />
-                        </div>
-                        <div class="text-left">
-                            <p class="font-semibold text-gray-900">Enrolled Subjects</p>
-                            <p class="text-xs text-gray-500">
-                                Fee derivation by subject per academic term
-                                <span v-if="enrolledSubjectTerms.length > 0" class="ml-1 text-indigo-600">
-                                    · {{ enrolledSubjectTerms.length }} term{{ enrolledSubjectTerms.length !== 1 ? 's' : '' }}
-                                </span>
-                            </p>
-                        </div>
-                    </div>
-                    <div class="flex items-center gap-3">
-                        <span
-                            v-if="!enrolledSubjectsOpen && enrolledSubjectTerms.length > 0"
-                            class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700"
-                        >
-                            {{ enrolledSubjectTerms.reduce((s, t) => s + t.subjectCount, 0) }} subjects total
-                        </span>
-                        <ChevronDown
-                            class="h-5 w-5 text-gray-400 transition-transform duration-200"
-                            :class="{ 'rotate-180': enrolledSubjectsOpen }"
-                        />
-                    </div>
-                </button>
-
-                <div v-if="enrolledSubjectsOpen" class="border-t border-gray-100">
-                    <div
-                        v-if="enrolledSubjectTerms.length === 0"
-                        class="flex flex-col items-center justify-center py-12 text-center text-sm text-gray-400"
-                    >
-                        <BookOpen class="mb-3 h-10 w-10 text-gray-200" />
-                        <p class="font-medium">No subject data available</p>
-                        <p class="mt-1 text-xs">Subject breakdown appears once an assessment with subjects has been created.</p>
-                    </div>
-
-                    <div
-                        v-for="(termPanel, idx) in enrolledSubjectTerms"
-                        :key="termPanel.assessmentId"
-                        :class="['border-gray-100', idx < enrolledSubjectTerms.length - 1 ? 'border-b' : '']"
-                    >
-                        <button
-                            type="button"
-                            class="flex w-full items-center justify-between px-6 py-3.5 text-left transition-colors select-none hover:bg-gray-50"
-                            @click="toggleSubjectTerm(termPanel.assessmentId)"
-                        >
-                            <div class="flex items-center gap-3">
-                                <ChevronDown
-                                    class="h-4 w-4 flex-shrink-0 text-gray-400 transition-transform duration-200"
-                                    :class="{ 'rotate-180': expandedSubjectTerms.has(termPanel.assessmentId) }"
-                                />
-                                <div>
-                                    <p class="font-semibold text-gray-900">{{ termPanel.label }}</p>
-                                    <p class="text-xs text-gray-500">{{ termPanel.schoolYear }} · {{ termPanel.course }}</p>
-                                </div>
-                            </div>
-                            <div class="flex flex-wrap items-center gap-2 text-right">
-                                <span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600">
-                                    {{ termPanel.subjectCount }} subject{{ termPanel.subjectCount !== 1 ? 's' : '' }}
-                                </span>
-                                <span class="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700">
-                                    {{ termPanel.totalUnits }} units
-                                </span>
-                                <span
-                                    v-if="termPanel.enrolledCount > 0"
-                                    class="rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700"
-                                >
-                                    ✓ {{ termPanel.enrolledCount }} enrolled
-                                </span>
-                                <span class="min-w-[90px] rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-700">
-                                    {{ formatCurrency(termPanel.totalTuition + termPanel.totalLab) }}
-                                </span>
-                            </div>
-                        </button>
-
-                        <div v-if="expandedSubjectTerms.has(termPanel.assessmentId)" class="border-t border-gray-100 bg-gray-50">
-                            <div class="flex flex-wrap items-center gap-4 border-b border-gray-100 bg-white px-6 py-2.5 text-xs text-gray-500">
-                                <span class="flex items-center gap-1.5">
-                                    <span
-                                        class="inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-100 text-xs font-bold text-green-700"
-                                        >✓</span
-                                    >
-                                    Enrolled (confirmed in student_enrollments)
-                                </span>
-                                <span class="flex items-center gap-1.5">
-                                    <span class="inline-flex h-4 w-4 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-400"
-                                        >○</span
-                                    >
-                                    Assessment only (no enrollment record)
-                                </span>
-                                <span v-if="termPanel.totalLab > 0" class="flex items-center gap-1.5 text-purple-600">
-                                    <FlaskConical class="h-3 w-3" />
-                                    Has laboratory component
-                                </span>
-                            </div>
-                            <div class="overflow-x-auto">
-                                <table class="min-w-full text-sm">
-                                    <thead>
-                                        <tr class="border-b border-gray-200 bg-gray-100 text-xs font-semibold tracking-wide text-gray-500 uppercase">
-                                            <th class="px-5 py-2.5 text-left">Status</th>
-                                            <th class="px-5 py-2.5 text-left">Code</th>
-                                            <th class="px-5 py-2.5 text-left">Subject Name</th>
-                                            <th class="px-5 py-2.5 text-center">LEC Units</th>
-                                            <th class="px-5 py-2.5 text-center">LAB Units</th>
-                                            <th class="px-5 py-2.5 text-right">Tuition Cost</th>
-                                            <th class="px-5 py-2.5 text-right">Lab Cost</th>
-                                            <th class="px-5 py-2.5 text-right">Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody class="divide-y divide-gray-100">
-                                        <tr
-                                            v-for="subject in termPanel.subjects"
-                                            :key="subject.subject_id"
-                                            :class="['transition-colors', subject.isEnrolled ? 'hover:bg-green-50/50' : 'hover:bg-gray-50']"
-                                        >
-                                            <td class="px-5 py-3 text-center">
-                                                <span
-                                                    v-if="subject.isEnrolled"
-                                                    class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-green-100 text-xs font-bold text-green-700"
-                                                    title="Confirmed enrollment record exists"
-                                                    >✓</span
-                                                >
-                                                <span
-                                                    v-else
-                                                    class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-400"
-                                                    title="Assessment record only — no enrollment record"
-                                                    >○</span
-                                                >
-                                            </td>
-                                            <td class="px-5 py-3">
-                                                <span class="rounded bg-indigo-50 px-2 py-0.5 font-mono text-xs font-semibold text-indigo-700">{{
-                                                    subject.code
-                                                }}</span>
-                                            </td>
-                                            <td class="px-5 py-3">
-                                                <div class="flex items-center gap-1.5">
-                                                    <span class="font-medium text-gray-900">{{ subject.name }}</span>
-                                                    <FlaskConical
-                                                        v-if="subject.hasLab"
-                                                        class="h-3.5 w-3.5 flex-shrink-0 text-purple-500"
-                                                        title="Has laboratory component"
-                                                    />
-                                                </div>
-                                            </td>
-                                            <td class="px-5 py-3 text-center">
-                                                <span class="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
-                                                    {{ subject.lecUnits }} unit{{ subject.lecUnits !== 1 ? 's' : '' }}
-                                                </span>
-                                            </td>
-                                            <td class="px-5 py-3 text-center">
-                                                <span v-if="subject.labUnits > 0" class="rounded-full bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700">
-                                                    {{ subject.labUnits }} unit{{ subject.labUnits !== 1 ? 's' : '' }}
-                                                </span>
-                                                <span v-else class="text-xs text-gray-300">—</span>
-                                            </td>
-                                            <td class="px-5 py-3 text-right">
-                                                <span class="text-xs text-gray-500">
-                                                    {{ subject.lecUnits }} ×
-                                                    {{ formatCurrency(subject.lecUnits > 0 ? subject.tuitionAmount / subject.lecUnits : 0) }}
-                                                </span>
-                                                <p class="font-medium text-gray-900">{{ formatCurrency(subject.tuitionAmount) }}</p>
-                                            </td>
-                                            <td class="px-5 py-3 text-right">
-                                                <span v-if="subject.hasLab" class="font-medium text-purple-700">{{
-                                                    formatCurrency(subject.labAmount)
-                                                }}</span>
-                                                <span v-else class="text-xs text-gray-300">—</span>
-                                            </td>
-                                            <td class="px-5 py-3 text-right font-semibold text-gray-900">
-                                                {{ formatCurrency(subject.tuitionAmount + subject.labAmount) }}
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                    <tfoot>
-                                        <tr class="border-t-2 border-gray-200 bg-gray-50 text-sm font-semibold">
-                                            <td colspan="3" class="px-5 py-3 text-gray-700">
-                                                Subtotal — {{ termPanel.subjectCount }} subjects
-                                            </td>
-                                            <td class="px-5 py-3 text-center text-gray-700">{{ termPanel.totalLecUnits }}</td>
-                                            <td class="px-5 py-3 text-center text-gray-700">{{ termPanel.totalLabUnits }}</td>
-                                            <td class="px-5 py-3 text-right text-gray-900">{{ formatCurrency(termPanel.totalTuition) }}</td>
-                                            <td class="px-5 py-3 text-right text-purple-700">
-                                                <span v-if="termPanel.totalLab > 0">{{ formatCurrency(termPanel.totalLab) }}</span>
-                                                <span v-else class="text-xs font-normal text-gray-300">—</span>
-                                            </td>
-                                            <td class="px-5 py-3 text-right text-indigo-700">
-                                                {{ formatCurrency(termPanel.totalTuition + termPanel.totalLab) }}
-                                            </td>
-                                        </tr>
-                                    </tfoot>
-                                </table>
-                            </div>
-                            <div class="border-t border-gray-100 bg-white px-5 py-2.5 text-xs text-gray-400">
-                                Miscellaneous fees (registration, library, athletics, etc.) are fixed per semester and are not listed per subject
-                                above. They are included in the Total Assessment shown in the Fee Breakdown card.
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <!-- ── END ENROLLED SUBJECTS ACCORDION ── -->
 
             <!-- ── Payment History ── -->
             <Card>
@@ -1485,7 +1254,7 @@ const getStudentStatusColor = (status: string) => {
                                             </td>
                                             <td class="px-5 py-3 text-center">
                                                 <span class="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
-                                                    {{ subject.units }}
+                                                    {{ subject.lecUnits }} unit{{ subject.lecUnits !== 1 ? 's' : '' }}
                                                 </span>
                                             </td>
                                             <td class="px-5 py-3 text-right font-medium text-gray-900">

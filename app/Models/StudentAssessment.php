@@ -21,8 +21,8 @@ class StudentAssessment extends Model
     ];
 
     protected $casts = [
-        'lec_units'      => 'integer',
-        'lab_units'      => 'integer',
+        'lec_units'        => 'integer',
+        'lab_units'        => 'integer',
         'total_assessment' => 'decimal:2',
     ];
 
@@ -61,18 +61,19 @@ class StudentAssessment extends Model
 
     /**
      * Compute the lab fee for this assessment.
+     * Laboratory Fee = Lab Units × ₱1,656.00
      */
     public function getLabFeeAttribute(): float
     {
-        return $this->lab_subjects * (float) config('fees.lab_fee_per_subject', 1656.00);
+        return $this->lab_units * (float) config('fees.lab_fee_per_unit', 1656.00);
     }
 
     /**
-     * Fixed miscellaneous fees.
+     * Fixed miscellaneous fees (₱4,700).
      */
     public function getMiscFeeAttribute(): float
     {
-        return (float) config('fees.misc_fee_fixed', 5300.00);
+        return (float) config('fees.misc_fee_fixed', 4700.00);
     }
 
     /**

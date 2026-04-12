@@ -32,20 +32,45 @@ class StudentAccountController extends Controller
             ->with(['paymentTerms' => fn($q) => $q->orderBy('term_order')])
             ->orderBy('school_year')
             ->get()
-            ->map(fn($a) => [
-                'id'               => $a->id,
-                'assessment_number'=> $a->assessment_number,
-                'year_level'       => $a->year_level,
-                'semester'         => $a->semester,
-                'school_year'      => $a->school_year,
-                'course'           => $a->course,
-                'total_assessment' => (float) $a->total_assessment,
-                'tuition_fee'      => (float) $a->tuition_fee,
-                'other_fees'       => (float) $a->other_fees,
-                'fee_breakdown'    => $a->fee_breakdown ?? [],
-                'status'           => $a->status,
-                'created_at'       => $a->created_at,
-            ]);
+            ->map(function($a) {
+                $feeBreakdown = $this->computeTotal($a->lec_units, $a->lab_units);
+                return [
+                    'id'               => $a->id,
+                    'assessment_number'=> $a->assessment_number,
+                    'year_level'       => $a->year_level,
+                    'semester'         => $a->semester,
+                    'school_year'      => $a->school_year,
+                    'course'           => $a->course,
+                    'total_assessment' => (float) $a->total_assessment,
+                    'tuition_fee'      => (float) $feeBreakdown['tuitionFee'],
+                    'other_fees'       => (float) ($feeBreakdown['labFee'] + $feeBreakdown['miscFee']),
+                    'fee_breakdown'    => [
+                        [
+                            'category' => 'Tuition',
+                            'name'     => 'Lecture Units',
+                            'code'     => 'TUI',
+                            'units'    => $a->lec_units,
+                            'amount'   => $feeBreakdown['tuitionFee'],
+                        ],
+                        [
+                            'category' => 'Laboratory',
+                            'name'     => 'Laboratory Units',
+                            'code'     => 'LAB',
+                            'units'    => $a->lab_units,
+                            'amount'   => $feeBreakdown['labFee'],
+                        ],
+                        [
+                            'category' => 'Miscellaneous',
+                            'name'     => 'Registration Fee',
+                            'code'     => 'REG',
+                            'units'    => 1,
+                            'amount'   => $feeBreakdown['miscFee'],
+                        ],
+                    ],
+                    'status'           => $a->status,
+                    'created_at'       => $a->created_at,
+                ];
+            });
 
         $paymentTerms = $assessment
             ? StudentPaymentTerm::where('student_assessment_id', $assessment->id)
@@ -112,5 +137,22 @@ class StudentAccountController extends Controller
             'pendingApprovalPayments'      => [],
             'enrolledSubjectsByAssessment' => $enrolledSubjectsByAssessment,
         ]);
+    }
+
+    /**
+     * Compute fee totals from lecture and lab units.
+     */
+    private function computeTotal(int $lecUnits, int $labUnits): array
+    {
+        $tuitionPerUnit = (float) config('fees.tuition_per_lec_unit', 364.00);
+        $labFeePerUnit  = (float) config('fees.lab_fee_per_unit', 1656.00);
+        $miscFeeFixed   = (float) config('fees.misc_fee_fixed', 4700.00);
+
+        $tuitionFee = $lecUnits * $tuitionPerUnit;
+        $labFee     = $labUnits * $labFeePerUnit;
+        $miscFee    = $miscFeeFixed;
+        $total      = $tuitionFee + $labFee + $miscFee;
+
+        return compact('tuitionFee', 'labFee', 'miscFee', 'total');
     }
 }

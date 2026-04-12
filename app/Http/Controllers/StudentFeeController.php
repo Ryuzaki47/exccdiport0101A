@@ -301,7 +301,7 @@ class StudentFeeController extends Controller
         if ($assessment) {
             $feeBreakdown = $this->computeTotal(
                 $assessment->lec_units,
-                $assessment->lab_subjects
+                $assessment->lab_units
             );
         }
 
@@ -316,17 +316,61 @@ class StudentFeeController extends Controller
             ],
             'assessment'   => $assessment ? [
                 'id'           => $assessment->id,
+                'course'       => $user->course,
                 'semester'     => $assessment->semester,
                 'school_year'  => $assessment->school_year,
-                'lec_units'    => $assessment->lec_units,
-                'lab_units'    => $assessment->lab_units,
-                'lab_subjects' => $assessment->lab_subjects,
+                'year_level'   => $user->year_level,
+                'total_assessment' => (float) $assessment->total_assessment,
+                'tuition_fee'  => $feeBreakdown['tuitionFee'] ?? 0,
+                'other_fees'   => ($feeBreakdown['labFee'] ?? 0) + ($feeBreakdown['miscFee'] ?? 0),
+                'fee_breakdown' => [
+                    [
+                        'category' => 'Tuition',
+                        'name'     => 'Lecture Units',
+                        'code'     => 'TUI',
+                        'units'    => $assessment->lec_units,
+                        'amount'   => $feeBreakdown['tuitionFee'] ?? 0,
+                    ],
+                    [
+                        'category' => 'Laboratory',
+                        'name'     => 'Laboratory Units',
+                        'code'     => 'LAB',
+                        'units'    => $assessment->lab_units,
+                        'amount'   => $feeBreakdown['labFee'] ?? 0,
+                    ],
+                    [
+                        'category' => 'Miscellaneous',
+                        'name'     => 'Registration Fee',
+                        'code'     => 'REG',
+                        'units'    => 1,
+                        'amount'   => $feeBreakdown['miscFee'] ?? 0,
+                    ],
+                ],
                 'status'       => $assessment->status,
+                'paymentTerms' => $assessment->paymentTerms->sortBy('term_order')->values(),
             ] : null,
-            'feeBreakdown' => $feeBreakdown,
-            'paymentTerms' => $assessment
-                ? $assessment->paymentTerms->sortBy('term_order')->values()
-                : [],
+            'allAssessments' => [],
+            'transactions' => [],
+            'payments' => [],
+            'feeBreakdown' => [
+                [
+                    'category' => 'Tuition',
+                    'total' => $feeBreakdown['tuitionFee'] ?? 0,
+                    'items' => 1,
+                ],
+                [
+                    'category' => 'Laboratory',
+                    'total' => $feeBreakdown['labFee'] ?? 0,
+                    'items' => 1,
+                ],
+                [
+                    'category' => 'Miscellaneous',
+                    'total' => $feeBreakdown['miscFee'] ?? 0,
+                    'items' => 1,
+                ],
+            ],
+            'backUrl' => route('student-fees.index'),
+            'enrolledSubjectsByAssessment' => [],
         ]);
     }
 
@@ -345,8 +389,8 @@ class StudentFeeController extends Controller
 
         $feeRates = [
             'tuition_per_lec_unit' => config('fees.tuition_per_lec_unit', 364.00),
-            'lab_fee_per_subject'  => config('fees.lab_fee_per_subject', 1656.00),
-            'misc_fee_fixed'       => config('fees.misc_fee_fixed', 5300.00),
+            'lab_fee_per_unit'     => config('fees.lab_fee_per_unit', 1656.00),
+            'misc_fee_fixed'       => config('fees.misc_fee_fixed', 4700.00),
             'payment_terms'        => config('fees.payment_terms', []),
         ];
 
@@ -364,7 +408,6 @@ class StudentFeeController extends Controller
                 'school_year'  => $assessment->school_year,
                 'lec_units'    => $assessment->lec_units,
                 'lab_units'    => $assessment->lab_units,
-                'lab_subjects' => $assessment->lab_subjects,
             ],
             'feeRates' => $feeRates,
         ]);
@@ -382,7 +425,6 @@ class StudentFeeController extends Controller
             'school_year'  => ['required', 'string', 'max:20'],
             'lec_units'    => ['required', 'integer', 'min:0', 'max:30'],
             'lab_units'    => ['required', 'integer', 'min:0', 'max:10'],
-            'lab_subjects' => ['required', 'integer', 'min:0', 'max:10'],
         ]);
 
         $assessment = StudentAssessment::where('user_id', $userId)
@@ -404,7 +446,7 @@ class StudentFeeController extends Controller
             // Recompute fees
             $fees = $this->computeTotal(
                 (int) $validated['lec_units'],
-                (int) $validated['lab_subjects']
+                (int) $validated['lab_units']
             );
 
             // Update the assessment
@@ -413,7 +455,7 @@ class StudentFeeController extends Controller
                 'school_year'  => $validated['school_year'],
                 'lec_units'    => $validated['lec_units'],
                 'lab_units'    => $validated['lab_units'],
-                'lab_subjects' => $validated['lab_subjects'],
+                'total_assessment' => $fees['total'],
             ]);
 
             // Delete old terms and regenerate
@@ -433,14 +475,13 @@ class StudentFeeController extends Controller
                 ?->update([
                     'amount' => $fees['total'],
                     'meta'   => json_encode([
-                        'lec_units'    => $validated['lec_units'],
-                        'lab_units'    => $validated['lab_units'],
-                        'lab_subjects' => $validated['lab_subjects'],
-                        'tuition_fee'  => $fees['tuitionFee'],
-                        'lab_fee'      => $fees['labFee'],
-                        'misc_fee'     => $fees['miscFee'],
-                        'school_year'  => $validated['school_year'],
-                        'updated_at'   => now()->toISOString(),
+                        'lec_units'   => $validated['lec_units'],
+                        'lab_units'   => $validated['lab_units'],
+                        'tuition_fee' => $fees['tuitionFee'],
+                        'lab_fee'     => $fees['labFee'],
+                        'misc_fee'    => $fees['miscFee'],
+                        'school_year' => $validated['school_year'],
+                        'updated_at'  => now()->toISOString(),
                     ]),
                 ]);
         });
