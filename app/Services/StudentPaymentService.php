@@ -9,6 +9,7 @@ use App\Models\Payment;
 use App\Models\Notification;
 use App\Models\StudentAssessment;
 use App\Models\StudentPaymentTerm;
+use App\Services\AccountService;          // FIX #3: was missing
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -74,8 +75,7 @@ class StudentPaymentService
             }
 
             // Build meta for audit trail. Store selected_term_id so finalizeApprovedPayment()
-            // can look up the EXACT term without relying on term_name string-matching, which
-            // breaks when a student has multiple assessments with identically-named terms.
+            // can look up the EXACT term without relying on term_name string-matching.
             $meta = [
                 'payment_method'    => $options['payment_method'] ?? null,
                 'description'       => $description,
@@ -112,27 +112,22 @@ class StudentPaymentService
                     'paid_date' => $newStatus === PaymentStatus::PAID->value ? now() : $term->paid_date,
                 ]);
 
-                // FIX (Bug #4): Added student_assessment_id so PDF export can filter
-                // payments by assessment. Without it, assessment-scoped payment history
-                // was always empty for staff-recorded payments.
                 if ($user->student) {
                     Payment::create([
-                        'student_id'           => $user->student->id,
+                        'student_id'            => $user->student->id,
                         'student_assessment_id' => $term->student_assessment_id,
-                        'amount'               => $amount,
-                        'payment_method'       => $options['payment_method'] ?? null,
-                        'description'          => $description,
-                        'status'               => PaymentStatus::COMPLETED->value,
-                        'created_at'           => $options['paid_at'] ?? now(),
-                        'updated_at'           => $options['paid_at'] ?? now(),
+                        'amount'                => $amount,
+                        'payment_method'        => $options['payment_method'] ?? null,
+                        'description'           => $description,
+                        'status'                => PaymentStatus::COMPLETED->value,
+                        'created_at'            => $options['paid_at'] ?? now(),
+                        'updated_at'            => $options['paid_at'] ?? now(),
                     ]);
                 }
 
-                // Recalculate account balance
+                // FIX #3: AccountService is now properly imported at top of file
                 AccountService::recalculate($user);
 
-                // Check if all terms of this assessment are now fully paid.
-                // If yes, notify admin to create the next semester's assessment.
                 $this->checkAndNotifyProgressionReady($user, $term->student_assessment_id);
 
                 $message = 'Payment of ₱' . number_format($amount, 2) . ' recorded successfully.';
@@ -150,31 +145,7 @@ class StudentPaymentService
 
     /**
      * Finalize an approved payment by updating the transaction and payment term.
-     * Called when a payment approval workflow is completed.
-     *
-     * Uses the stored `selected_term_id` in transaction meta for reliable term
-     * lookup — avoids mismatches when a student has multiple assessments that
-     * contain identically-named payment terms (e.g. "Upon Registration" for both
-     * 1st Sem and 2nd Sem assessments).
-     *
-     * @param  Transaction $transaction The approved payment transaction
-     * @return void
-     * @throws \Exception on processing failure
-     */
-    /**
-     * Finalize an approved payment by updating the transaction and payment term.
      * Implements sequential allocation across terms if the payment exceeds the selected term's balance.
-     * Called when a payment approval workflow is completed.
-     *
-     * ── Allocation Logic ──
-     * If payment amount > selected term's balance:
-     *   1. Apply up to the selected term's balance to that term
-     *   2. Allocate remaining balance sequentially to other unpaid terms
-     *   3. Document allocation in transaction meta
-     *   4. Note any unallocated excess (overpayment beyond total outstanding)
-     *
-     * @param  Transaction $transaction The approved payment transaction
-     * @return void
      */
     public function finalizeApprovedPayment(Transaction $transaction): void
     {
@@ -183,7 +154,6 @@ class StudentPaymentService
         }
 
         if ($transaction->status === PaymentStatus::PAID->value) {
-            // Already finalized — idempotent, skip
             return;
         }
 
@@ -191,7 +161,7 @@ class StudentPaymentService
             $user   = $transaction->user;
             $amount = (float) $transaction->amount;
 
-            // ── Priority 1: use the term ID stored in meta ──
+            // Priority 1: use the term ID stored in meta
             $termId = isset($transaction->meta['selected_term_id'])
                 ? (int) $transaction->meta['selected_term_id']
                 : null;
@@ -202,8 +172,7 @@ class StudentPaymentService
                 $term = StudentPaymentTerm::find($termId);
             }
 
-            // ── BUG FIX #4: User doesn't have assessments() relationship ──
-            // Fallback: match by term name scoped to user. Query StudentAssessment directly
+            // Fallback: match by term name scoped to user assessments
             if (! $term) {
                 $termName = $transaction->meta['term_name'] ?? $transaction->type;
 
@@ -213,7 +182,6 @@ class StudentPaymentService
                     'user_id'        => $user->id,
                 ]);
 
-                // Query through StudentAssessment directly instead of non-existent User::assessments()
                 $term = StudentPaymentTerm::whereHas('assessment', function ($q) use ($user) {
                     $q->where('user_id', $user->id);
                 })
@@ -230,14 +198,10 @@ class StudentPaymentService
                 );
             }
 
-            // ── Sequential Allocation across terms ──────────────────────────────
-            // If payment exceeds selected term's balance, allocate remainder to other terms.
-            // This matches StudentFeeController::storePayment() allocation pattern.
-            
+            // Sequential allocation across terms
             $allocation = [];
             $remaining  = $amount;
 
-            // START: Apply to selected term first
             $selectedTermBalance = round((float) $term->balance, 2);
             $appliedToSelected   = round(min($remaining, $selectedTermBalance), 2);
             $newBalance          = round($selectedTermBalance - $appliedToSelected, 2);
@@ -265,7 +229,6 @@ class StudentPaymentService
 
             $remaining = round($remaining - $appliedToSelected, 2);
 
-            // IF OVERPAYMENT: allocate remainder to other unpaid terms (in order)
             if ($remaining > 0) {
                 $otherTerms = StudentPaymentTerm::where('student_assessment_id', $term->student_assessment_id)
                     ->whereIn('status', PaymentStatus::unpaidValues())
@@ -307,8 +270,7 @@ class StudentPaymentService
                 }
             }
 
-            // ── Create Payment records per term ──────────────────────────────────
-            // One Payment row per term to give per-term payment history
+            // Create Payment records per term
             $totalApplied = round($amount - $remaining, 2);
 
             foreach ($allocation as $alloc) {
@@ -327,7 +289,6 @@ class StudentPaymentService
                 }
             }
 
-            // ── Build description reflecting allocation ────────────────────────
             if (count($allocation) > 1) {
                 $termsLabel  = collect($allocation)->pluck('term_name')->implode(', ');
                 $description = '₱' . number_format($totalApplied, 2) . ' allocated across: ' . $termsLabel;
@@ -338,42 +299,35 @@ class StudentPaymentService
                 $description = 'Payment — ' . ($allocation[0]['term_name'] ?? 'Term');
             }
 
-            // ── Mark transaction as paid and update meta with allocation details ──
             $transaction->update([
                 'status' => PaymentStatus::PAID->value,
                 'meta'   => array_merge($transaction->meta ?? [], [
-                    'allocation'        => $allocation,
-                    'terms_covered'     => count($allocation),
-                    'total_applied'     => $totalApplied,
-                    'unallocated'       => $remaining,
-                    'description'       => $description,
+                    'allocation'    => $allocation,
+                    'terms_covered' => count($allocation),
+                    'total_applied' => $totalApplied,
+                    'unallocated'   => $remaining,
+                    'description'   => $description,
                 ]),
             ]);
 
-            // ── Recalculate account balance ──
+            // FIX #3: AccountService is now properly imported
             AccountService::recalculate($user);
 
-            // ── Check if all terms of this assessment are now fully paid ──
-            // If yes, notify admin to create the next semester's assessment.
             $this->checkAndNotifyProgressionReady($user, $term->student_assessment_id);
 
             Log::info('Payment finalized with allocation', [
-                'transaction_id' => $transaction->id,
+                'transaction_id'   => $transaction->id,
                 'selected_term_id' => $term->id,
-                'amount'        => $amount,
-                'terms_allocated' => count($allocation),
-                'total_applied' => $totalApplied,
-                'unallocated'   => $remaining,
+                'amount'           => $amount,
+                'terms_allocated'  => count($allocation),
+                'total_applied'    => $totalApplied,
+                'unallocated'      => $remaining,
             ]);
         });
     }
 
     /**
      * Cancel a rejected payment by updating the transaction status.
-     * Called when a payment approval workflow is rejected.
-     *
-     * @param  Transaction $transaction The rejected payment transaction
-     * @return void
      */
     public function cancelRejectedPayment(Transaction $transaction): void
     {
@@ -382,7 +336,6 @@ class StudentPaymentService
         }
 
         DB::transaction(function () use ($transaction) {
-            // Mark as cancelled — term balance was never deducted (payment was pending)
             $transaction->update(['status' => PaymentStatus::CANCELLED->value]);
 
             Log::info('Payment cancelled due to workflow rejection', [
@@ -395,10 +348,6 @@ class StudentPaymentService
 
     /**
      * Get the total outstanding balance for a user, derived from their payment terms.
-     * Queries through StudentAssessment to ensure consistent access pattern.
-     *
-     * @param  User $user
-     * @return float
      */
     public function getTotalOutstandingBalance(User $user): float
     {
@@ -411,9 +360,6 @@ class StudentPaymentService
 
     /**
      * Public proxy for checkAndNotifyProgressionReady.
-     * Called by StudentFeeController::storePayment() after the multi-term
-     * allocation completes, so the controller does not need to duplicate
-     * the progression-ready notification logic.
      */
     public function notifyProgressionIfComplete(User $user, int $assessmentId): void
     {
@@ -424,19 +370,6 @@ class StudentPaymentService
     // PRIVATE: Semester Completion Detection + Admin Notification
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * After every payment finalization (approved or direct), check whether ALL
-     * payment terms of the given assessment are now fully paid.
-     *
-     * If yes:
-     *   1. Notify the Admin  — "Student X finished paying [Year] [Sem]. Please
-     *                           create their next semester's assessment."
-     *   2. Notify the Student — "Your [Year] [Sem] is fully settled. The admin
-     *                            is preparing your next semester's payables."
-     *
-     * The check is idempotent: if a "progression_ready" notification for this
-     * exact assessment already exists, it is not duplicated.
-     */
     private function checkAndNotifyProgressionReady(User $user, int $assessmentId): void
     {
         try {
@@ -455,7 +388,6 @@ class StudentPaymentService
                 return;
             }
 
-            // Guard: don't duplicate notifications for the same assessment
             $alreadyNotified = Notification::where('type', 'progression_ready')
                 ->whereJsonContains('term_ids', $assessmentId)
                 ->exists();
@@ -474,12 +406,6 @@ class StudentPaymentService
             $studentName = trim($user->first_name . ' ' . $user->last_name);
             $nextLabel   = $this->resolveNextSemesterLabel($yearLevel, $semester);
 
-            // ── 1. Admin notification ─────────────────────────────────────────
-            // NOTIFICATION: CUSTOM ADMIN_NOTIFICATIONS
-            // Progression ready is a system broadcast; admins need time to process.
-            // Uses: Notification::create() → writes to `admin_notifications` table
-            // Why: Role targeting (admin), time window (30 days), not user-specific
-            // See: docs/NOTIFICATION_ARCHITECTURE.md for system overview
             Notification::create([
                 'title'       => "📋 Assessment Required: {$studentName}",
                 'message'     => "{$studentName} (ID: {$user->account_id}) has fully paid their "
@@ -495,13 +421,6 @@ class StudentPaymentService
                 'term_ids'    => [$assessmentId],
             ]);
 
-            // ── 2. Student notification ───────────────────────────────────────
-            // NOTIFICATION: CUSTOM ADMIN_NOTIFICATIONS
-            // Progression confirmation is user-specific but system-generated.
-            // Uses: Notification::create() → writes to `admin_notifications` table
-            // Why: Could send via $user->notify() in future, but using admin_notifications
-            //      for consistency with matching admin notification and audit trail
-            // See: docs/NOTIFICATION_ARCHITECTURE.md for system overview
             Notification::create([
                 'title'       => "✅ {$yearLevel} {$semester} Fully Paid!",
                 'message'     => "Congratulations! You have fully settled all payment terms for "
@@ -526,7 +445,6 @@ class StudentPaymentService
             ]);
 
         } catch (\Exception $e) {
-            // Never let notification failure break payment finalization
             Log::error('StudentPaymentService: failed to send progression_ready notification', [
                 'user_id'       => $user->id,
                 'assessment_id' => $assessmentId,
@@ -535,9 +453,6 @@ class StudentPaymentService
         }
     }
 
-    /**
-     * Build a human-readable label for the next semester/year.
-     */
     private function resolveNextSemesterLabel(string $yearLevel, string $semester): string
     {
         $progression = [

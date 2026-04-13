@@ -188,6 +188,7 @@ const submitCheckout = async () => {
             headers: {
                 'Content-Type': 'application/json',
                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                'X-Requested-With': 'XMLHttpRequest',
             },
             body: JSON.stringify({
                 amount: form.amount,

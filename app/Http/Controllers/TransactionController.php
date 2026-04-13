@@ -67,22 +67,39 @@ class TransactionController extends Controller
                 $currentTerm = $this->getCurrentTerm();
             }
 
-            // ── Load all assessments for the student (powers the Enrolled Subjects accordion) ──
-            // total_assessment is included so the Vue term summary header
-            // (Total Assessed / Total Paid / Balance) can derive the assessment
-            // total from the assessment record instead of charge transactions.
+            // ── Load all assessments for the student ──
             $allAssessments = \App\Models\StudentAssessment::where('user_id', $user->id)
                 ->where('status', '!=', 'cancelled')
                 ->orderByDesc('created_at')
-                ->get(['id', 'school_year', 'semester', 'year_level', 'course', 'fee_breakdown', 'total_assessment'])
+                // FIX #5: 'fee_breakdown' is not a real column. Build it from stored units.
+                ->get(['id', 'school_year', 'semester', 'year_level', 'lec_units', 'lab_units', 'lab_subjects', 'total_assessment'])
                 ->map(fn ($a) => [
                     'id'               => $a->id,
                     'school_year'      => $a->school_year,
                     'semester'         => $a->semester,
                     'year_level'       => $a->year_level,
-                    'course'           => $a->course,
-                    'fee_breakdown'    => $a->fee_breakdown ?? [],
                     'total_assessment' => (float) $a->total_assessment,
+                    // Build fee_breakdown inline from stored unit values + live config rates
+                    'fee_breakdown'    => [
+                        [
+                            'category' => 'Tuition',
+                            'name'     => 'Lecture Units',
+                            'units'    => $a->lec_units,
+                            'amount'   => $a->lec_units * (float) config('fees.tuition_per_lec_unit', 364.00),
+                        ],
+                        [
+                            'category' => 'Laboratory',
+                            'name'     => 'Laboratory Subjects',
+                            'units'    => $a->lab_subjects,
+                            'amount'   => $a->lab_subjects * (float) config('fees.lab_fee_per_subject', 1656.00),
+                        ],
+                        [
+                            'category' => 'Miscellaneous',
+                            'name'     => 'Fixed Fees',
+                            'units'    => 1,
+                            'amount'   => (float) config('fees.misc_fee_fixed', 4700.00),
+                        ],
+                    ],
                 ])
                 ->toArray();
 

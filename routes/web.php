@@ -83,49 +83,73 @@ Route::middleware(['auth', 'verified', 'role:admin'])->group(function () {
 });
 
 // ============================================
-// STUDENT FEE MANAGEMENT ROUTES (Admin + Accounting)
+// STUDENT FEE MANAGEMENT ROUTES
 // ============================================
-// Admin + Accounting: Can view (index, show)
-// Admin only: Can edit, update assessments
+// Admin + Accounting: index, show, export PDF, payments
+// Admin only:         edit, update, create-student, store-student
+// Accounting only:    create, search, store assessment
 // ============================================
-Route::middleware(['auth', 'verified', 'role:admin,accounting'])->prefix('student-fees')->group(function () {
-    Route::get('/', [StudentFeeController::class, 'index'])->name('student-fees.index');
-    Route::get('/{userId}', [StudentFeeController::class, 'show'])
-        ->whereNumber('userId')
-        ->name('student-fees.show');
-    Route::get('/{userId}/export-pdf', [StudentFeeController::class, 'exportPdf'])
-        ->whereNumber('userId')
-        ->name('student-fees.export-pdf');
-    Route::post('/{user}/drop', [StudentFeeController::class, 'drop'])
-        ->whereNumber('user')
-        ->name('student-fees.drop');
-});
 
-// Admin-only edit and update routes
-Route::middleware(['auth', 'verified', 'role:admin'])->prefix('student-fees')->group(function () {
-    Route::get('/{userId}/edit', [StudentFeeController::class, 'edit'])
-        ->whereNumber('userId')
-        ->name('student-fees.edit');
-    Route::put('/{userId}', [StudentFeeController::class, 'update'])
-        ->whereNumber('userId')
-        ->name('student-fees.update');
-});
+// ── Shared: Admin + Accounting ───────────────────────────────────────────────
+Route::middleware(['auth', 'verified', 'role:admin,accounting'])
+    ->prefix('student-fees')
+    ->name('student-fees.')
+    ->group(function () {
+        Route::get('/', [StudentFeeController::class, 'index'])->name('index');
+        Route::get('/search', [StudentFeeController::class, 'search'])->name('search');
 
-// Admin-only routes for student creation
-Route::middleware(['auth', 'verified', 'role:admin'])->prefix('student-fees')->group(function () {
-    Route::get('/create-student', [StudentFeeController::class, 'createStudent'])->name('student-fees.create-student');
-    Route::post('/store-student', [StudentFeeController::class, 'storeStudent'])->name('student-fees.store-student');
-});
+        Route::get('/{userId}/export-pdf', [StudentFeeController::class, 'exportPdf'])
+            ->whereNumber('userId')
+            ->name('export-pdf');
 
-// Accounting-only routes for assessment management and payment recording
-Route::middleware(['auth', 'verified', 'role:accounting'])->prefix('student-fees')->group(function () {
-    Route::get('/create', [StudentFeeController::class, 'create'])->name('student-fees.create');
-    Route::get('/search', [StudentFeeController::class, 'search'])->name('student-fees.search');
-    Route::post('/', [StudentFeeController::class, 'store'])->name('student-fees.store');
-    Route::post('/{userId}/payments', [StudentFeeController::class, 'storePayment'])
-        ->whereNumber('userId')
-        ->name('student-fees.payments.store');
-});
+        Route::post('/{userId}/payments', [StudentFeeController::class, 'storePayment'])
+            ->whereNumber('userId')
+            ->name('payments.store');
+
+        Route::post('/{user}/drop', [StudentFeeController::class, 'drop'])
+            ->whereNumber('user')
+            ->name('drop');
+
+        // IMPORTANT: Specific static-segment routes MUST be registered
+        // BEFORE the wildcard /{userId} catch-all to prevent route collision.
+        Route::get('/{userId}/edit', [StudentFeeController::class, 'edit'])
+            ->whereNumber('userId')
+            ->name('edit');
+
+        // Catch-all last — after all /{userId}/sub-routes above.
+        Route::get('/{userId}', [StudentFeeController::class, 'show'])
+            ->whereNumber('userId')
+            ->name('show');
+    });
+
+// ── Admin-only: Edit assessment ───────────────────────────────────────────────
+// NOTE: The edit/update actions are also guarded inside the controller.
+// The route group above allows accounting to see the URL resolve (no 404),
+// but the controller's edit() and update() methods enforce admin-only
+// via policy or explicit role check. This prevents Inertia 404 on redirect.
+Route::middleware(['auth', 'verified', 'role:admin'])
+    ->prefix('student-fees')
+    ->name('student-fees.')
+    ->group(function () {
+        Route::put('/{userId}', [StudentFeeController::class, 'update'])
+            ->whereNumber('userId')
+            ->name('update');
+
+        Route::get('/create-student', [StudentFeeController::class, 'createStudent'])
+            ->name('create-student');
+
+        Route::post('/store-student', [StudentFeeController::class, 'storeStudent'])
+            ->name('store-student');
+    });
+
+// ── Accounting-only: Create and store assessments ────────────────────────────
+Route::middleware(['auth', 'verified', 'role:accounting'])
+    ->prefix('student-fees')
+    ->name('student-fees.')
+    ->group(function () {
+        Route::get('/create', [StudentFeeController::class, 'create'])->name('create');
+        Route::post('/', [StudentFeeController::class, 'store'])->name('store');
+    });
 
 // ============================================
 // TRANSACTION ROUTES

@@ -9,10 +9,14 @@ use App\Models\StudentPaymentTerm;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Enums\UserRoleEnum;
+use App\Enums\PaymentStatus;
+use App\Services\StudentPaymentService;
+use App\Services\AccountService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -23,15 +27,6 @@ class StudentFeeController extends Controller
     //  HELPERS
     // ─────────────────────────────────────────────────────────────
 
-    /**
-     * Compute the total assessment from raw unit inputs.
-     *
-     * Formula (AY 2025-2026):
-     *   Tuition  = lec_units × ₱364
-     *   Lab Fee  = lab_units × ₱1,656
-     *   Misc Fee = ₱4,700 (fixed)
-     *   Total    = tuition + lab_fee + misc_fee
-     */
     private function computeTotal(int $lecUnits, int $labUnits): array
     {
         $tuitionPerUnit = (float) config('fees.tuition_per_lec_unit', 364.00);
@@ -46,10 +41,6 @@ class StudentFeeController extends Controller
         return compact('tuitionFee', 'labFee', 'miscFee', 'total');
     }
 
-    /**
-     * Build payment terms from config percentages and a total amount.
-     * Returns an array ready to insert into student_payment_terms.
-     */
     private function buildPaymentTerms(float $total): array
     {
         $termConfigs = config('fees.payment_terms', []);
@@ -63,7 +54,7 @@ class StudentFeeController extends Controller
                 'term_order'  => $config['term_order'],
                 'percentage'  => $config['percentage'],
                 'amount'      => $amount,
-                'balance'     => $amount,   // balance = unpaid portion (source of truth)
+                'balance'     => $amount,
                 'status'      => 'unpaid',
                 'due_date'    => null,
                 'paid_date'   => null,
@@ -76,7 +67,7 @@ class StudentFeeController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  INDEX — list all assessed students
+    //  INDEX
     // ─────────────────────────────────────────────────────────────
 
     public function index(Request $request): Response
@@ -87,32 +78,28 @@ class StudentFeeController extends Controller
                 'account',
             ]);
 
-        // Search filter
         if ($request->filled('search')) {
             $q = $request->search;
             $query->where(function ($q2) use ($q) {
                 $q2->where('last_name', 'like', "%{$q}%")
-                ->orWhere('first_name', 'like', "%{$q}%")
-                ->orWhere('account_id', 'like', "%{$q}%");
+                   ->orWhere('first_name', 'like', "%{$q}%")
+                   ->orWhere('account_id', 'like', "%{$q}%");
             });
         }
 
-        // Course filter
         if ($request->filled('course')) {
             $query->where('course', $request->course);
         }
 
-        // Year level filter
         if ($request->filled('year_level')) {
             $query->where('year_level', $request->year_level);
         }
 
-        // Status filter
         if ($request->filled('status')) {
-            $query->whereHas('student', fn($q) => $q->where('enrollment_status', $request->status));
+            $query->whereHas('student', fn ($q) => $q->where('enrollment_status', $request->status));
         }
 
-        $students = $query->paginate(20)->through(fn($u) => [
+        $students = $query->paginate(20)->through(fn ($u) => [
             'id'                => $u->id,
             'account_id'        => $u->account_id,
             'name'              => $u->last_name . ', ' . $u->first_name,
@@ -122,9 +109,9 @@ class StudentFeeController extends Controller
             'remaining_balance' => $u->account?->balance ?? 0,
             'account'           => $u->account ? ['balance' => $u->account->balance] : null,
             'latestAssessment'  => $u->latestAssessment ? [
-                'id'             => $u->latestAssessment->id,
+                'id'               => $u->latestAssessment->id,
                 'total_assessment' => $u->latestAssessment->total_assessment,
-                'paymentTerms'   => $u->latestAssessment->paymentTerms->map(fn($t) => [
+                'paymentTerms'     => $u->latestAssessment->paymentTerms->map(fn ($t) => [
                     'id'         => $t->id,
                     'term_name'  => $t->term_name,
                     'term_order' => $t->term_order,
@@ -136,13 +123,12 @@ class StudentFeeController extends Controller
             ] : null,
         ]);
 
-        // Dropdown options for filters
         $courses    = User::where('role', UserRoleEnum::STUDENT)
-                        ->whereNotNull('course')
-                        ->distinct()->pluck('course')->sort()->values();
+                         ->whereNotNull('course')
+                         ->distinct()->pluck('course')->sort()->values();
         $yearLevels = User::where('role', UserRoleEnum::STUDENT)
-                        ->whereNotNull('year_level')
-                        ->distinct()->pluck('year_level')->sort()->values();
+                         ->whereNotNull('year_level')
+                         ->distinct()->pluck('year_level')->sort()->values();
 
         return Inertia::render('StudentFees/Index', [
             'students'   => $students,
@@ -160,12 +146,11 @@ class StudentFeeController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  CREATE — show the "create assessment" form
+    //  CREATE
     // ─────────────────────────────────────────────────────────────
 
     public function create(Request $request): Response
     {
-        // Pre-load the selected student if ?student_id= is passed
         $preselectedStudent = null;
         if ($request->filled('student_id')) {
             $student = User::where('role', UserRoleEnum::STUDENT)
@@ -183,11 +168,11 @@ class StudentFeeController extends Controller
             }
         }
 
-        // Pass fee rates to the frontend so it can compute live preview
         $feeRates = [
             'tuition_per_lec_unit' => config('fees.tuition_per_lec_unit', 364.00),
             'lab_fee_per_unit'     => config('fees.lab_fee_per_unit', 1656.00),
             'misc_fee_fixed'       => config('fees.misc_fee_fixed', 4700.00),
+            'misc_items'           => config('fees.misc_items', []),
             'payment_terms'        => config('fees.payment_terms', []),
         ];
 
@@ -198,89 +183,115 @@ class StudentFeeController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  STORE — save the new assessment (no subjects, just units)
+    //  STORE
+    //
+    //  FIX: generateAssessmentNumber() is now called INSIDE the
+    //  lockForUpdate transaction so it sees the fully-committed state
+    //  of the table including any just-archived rows. The model's
+    //  generator now uses DB MAX() instead of ORDER BY string sort.
     // ─────────────────────────────────────────────────────────────
 
     public function store(Request $request)
     {
-
         $validated = $request->validate([
             'user_id'     => ['required', 'exists:users,id'],
             'semester'    => ['required', 'in:1st,2nd,Summer'],
-            'school_year' => ['required', 'string', 'max:20'],  // e.g. "2025-2026"
+            'school_year' => ['required', 'string', 'max:20'],
             'lec_units'   => ['required', 'integer', 'min:0', 'max:30'],
             'lab_units'   => ['required', 'integer', 'min:0', 'max:10'],
         ]);
 
-        // Ensure this student doesn't already have an active assessment for the same semester
-        $existing = StudentAssessment::where('user_id', $validated['user_id'])
-            ->where('semester', $validated['semester'])
-            ->where('school_year', $validated['school_year'])
-            ->where('status', 'active')
-            ->first();
+        try {
+            DB::transaction(function () use ($validated) {
 
-        if ($existing) {
-            return back()->withErrors([
-                'user_id' => 'This student already has an active assessment for ' .
-                             $validated['semester'] . ' Sem, SY ' . $validated['school_year'] . '.',
-            ]);
-        }
+                // ── DUPLICATE GUARD ──────────────────────────────────────────
+                // Lock the student's rows before checking so concurrent
+                // requests cannot both pass and both insert.
+                $existing = StudentAssessment::where('user_id', $validated['user_id'])
+                    ->where('semester', $validated['semester'])
+                    ->where('school_year', $validated['school_year'])
+                    ->where('status', 'active')
+                    ->lockForUpdate()
+                    ->first();
 
-        DB::transaction(function () use ($validated) {
-            // 1. Archive any previous active assessment for this student
-            StudentAssessment::where('user_id', $validated['user_id'])
-                ->where('status', 'active')
-                ->update(['status' => 'completed']);
+                if ($existing) {
+                    throw new \RuntimeException(
+                        'DUPLICATE_ASSESSMENT:' .
+                        $validated['semester'] . ' Sem, SY ' . $validated['school_year']
+                    );
+                }
 
-            // 2. Compute fees
-            $fees = $this->computeTotal(
-                (int) $validated['lec_units'],
-                (int) $validated['lab_units']
-            );
+                // Archive any other active assessment for this student.
+                // This runs BEFORE generateAssessmentNumber() so the
+                // archived record is already committed within the transaction
+                // when the generator queries MAX().
+                StudentAssessment::where('user_id', $validated['user_id'])
+                    ->where('status', 'active')
+                    ->update(['status' => 'completed']);
 
-            // 3. Fetch student to get year_level
-            $student = \App\Models\User::findOrFail($validated['user_id']);
+                // Compute fees
+                $fees    = $this->computeTotal(
+                    (int) $validated['lec_units'],
+                    (int) $validated['lab_units']
+                );
+                $student = User::findOrFail($validated['user_id']);
 
-            // 4. Create the assessment record
-            $assessment = StudentAssessment::create([
-                'assessment_number' => 'ASMT-' . date('Y') . '-' . strtoupper(Str::random(6)),
-                'user_id'      => $validated['user_id'],
-                'semester'     => $validated['semester'],
-                'school_year'  => $validated['school_year'],
-                'lec_units'    => $validated['lec_units'],
-                'lab_units'    => $validated['lab_units'],
-                'year_level'   => $student->year_level,
-                'total_assessment' => $fees['total'],
-                'status'       => 'active',
-            ]);
+                // Generate assessment number AFTER archive so the MAX()
+                // query inside the generator sees all existing records
+                // (including just-archived ones) and returns the correct
+                // next sequence number.
+                $assessmentNumber = StudentAssessment::generateAssessmentNumber();
 
-            // 5. Build and insert payment terms
-            $terms = $this->buildPaymentTerms($fees['total']);
+                // Create assessment
+                $assessment = StudentAssessment::create([
+                    'assessment_number' => $assessmentNumber,
+                    'user_id'           => $validated['user_id'],
+                    'semester'          => $validated['semester'],
+                    'school_year'       => $validated['school_year'],
+                    'lec_units'         => $validated['lec_units'],
+                    'lab_units'         => $validated['lab_units'],
+                    'year_level'        => $student->year_level,
+                    'total_assessment'  => $fees['total'],
+                    'status'            => 'active',
+                ]);
 
-            foreach ($terms as $term) {
-                $assessment->paymentTerms()->create($term);
+                // Build and insert payment terms
+                foreach ($this->buildPaymentTerms($fees['total']) as $term) {
+                    $assessment->paymentTerms()->create($term);
+                }
+
+                // Post charge transaction to ledger
+                Transaction::create([
+                    'user_id'         => $validated['user_id'],
+                    'kind'            => 'charge',
+                    'status'          => 'paid',
+                    'amount'          => $fees['total'],
+                    'reference'       => 'ASMT-' . strtoupper(Str::random(8)),
+                    'payment_channel' => 'assessment',
+                    'year'            => now()->year,
+                    'semester'        => $validated['semester'],
+                    'meta'            => json_encode([
+                        'lec_units'   => $validated['lec_units'],
+                        'lab_units'   => $validated['lab_units'],
+                        'tuition_fee' => $fees['tuitionFee'],
+                        'lab_fee'     => $fees['labFee'],
+                        'misc_fee'    => $fees['miscFee'],
+                        'school_year' => $validated['school_year'],
+                    ]),
+                ]);
+
+                // Recalculate account balance
+                AccountService::recalculate($student);
+            });
+        } catch (\RuntimeException $e) {
+            if (str_starts_with($e->getMessage(), 'DUPLICATE_ASSESSMENT:')) {
+                $detail = str_replace('DUPLICATE_ASSESSMENT:', '', $e->getMessage());
+                return back()->withErrors([
+                    'user_id' => "This student already has an active assessment for {$detail}.",
+                ]);
             }
-
-            // 6. Record a charge transaction for the ledger (ASMT- prefix = assessment debit)
-            Transaction::create([
-                'user_id'         => $validated['user_id'],
-                'kind'            => 'charge',
-                'status'          => 'paid',  // "paid" here means "posted to ledger"
-                'amount'          => $fees['total'],
-                'reference'       => 'ASMT-' . strtoupper(Str::random(8)),
-                'payment_channel' => 'assessment',
-                'year'            => now()->year,
-                'semester'        => $validated['semester'],
-                'meta'            => json_encode([
-                    'lec_units'   => $validated['lec_units'],
-                    'lab_units'   => $validated['lab_units'],
-                    'tuition_fee' => $fees['tuitionFee'],
-                    'lab_fee'     => $fees['labFee'],
-                    'misc_fee'    => $fees['miscFee'],
-                    'school_year' => $validated['school_year'],
-                ]),
-            ]);
-        });
+            throw $e;
+        }
 
         return redirect()
             ->route('student-fees.show', $validated['user_id'])
@@ -288,12 +299,11 @@ class StudentFeeController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  SHOW — view a student's current assessment & payment terms
+    //  SHOW
     // ─────────────────────────────────────────────────────────────
 
     public function show(int $userId): Response
     {
-
         $user = User::with([
             'latestAssessment.paymentTerms',
         ])->findOrFail($userId);
@@ -309,7 +319,7 @@ class StudentFeeController extends Controller
         }
 
         return Inertia::render('StudentFees/Show', [
-            'student'      => [
+            'student' => [
                 'id'         => $user->id,
                 'name'       => $user->last_name . ', ' . $user->first_name,
                 'account_id' => $user->account_id,
@@ -317,16 +327,16 @@ class StudentFeeController extends Controller
                 'year_level' => $user->year_level,
                 'avatar'     => $user->avatar,
             ],
-            'assessment'   => $assessment ? [
-                'id'           => $assessment->id,
-                'course'       => $user->course,
-                'semester'     => $assessment->semester,
-                'school_year'  => $assessment->school_year,
-                'year_level'   => $user->year_level,
+            'assessment' => $assessment ? [
+                'id'               => $assessment->id,
+                'course'           => $user->course,
+                'semester'         => $assessment->semester,
+                'school_year'      => $assessment->school_year,
+                'year_level'       => $user->year_level,
                 'total_assessment' => (float) $assessment->total_assessment,
-                'tuition_fee'  => $feeBreakdown['tuitionFee'] ?? 0,
-                'other_fees'   => ($feeBreakdown['labFee'] ?? 0) + ($feeBreakdown['miscFee'] ?? 0),
-                'fee_breakdown' => [
+                'tuition_fee'      => $feeBreakdown['tuitionFee'] ?? 0,
+                'other_fees'       => ($feeBreakdown['labFee'] ?? 0) + ($feeBreakdown['miscFee'] ?? 0),
+                'fee_breakdown'    => [
                     [
                         'category' => 'Tuition',
                         'name'     => 'Lecture Units',
@@ -343,46 +353,60 @@ class StudentFeeController extends Controller
                     ],
                     [
                         'category' => 'Miscellaneous',
+                        'name'     => 'Miscellaneous Fees',
+                        'code'     => 'MISC',
+                        'units'    => 1,
+                        'amount'   => $feeBreakdown['miscFee'] ?? 0,
+                    ],
+                    [
+                        'category' => 'Registration',
                         'name'     => 'Registration Fee',
                         'code'     => 'REG',
                         'units'    => 1,
-                        'amount'   => $feeBreakdown['miscFee'] ?? 0,
+                        'amount'   => 0.00,
                     ],
                 ],
                 'status'       => $assessment->status,
                 'paymentTerms' => $assessment->paymentTerms->sortBy('term_order')->values(),
             ] : null,
-            'allAssessments' => [],
-            'transactions' => [],
-            'payments' => [],
-            'feeBreakdown' => [
-                [
-                    'category' => 'Tuition',
-                    'total' => $feeBreakdown['tuitionFee'] ?? 0,
-                    'items' => 1,
-                ],
-                [
-                    'category' => 'Laboratory',
-                    'total' => $feeBreakdown['labFee'] ?? 0,
-                    'items' => 1,
-                ],
-                [
-                    'category' => 'Miscellaneous',
-                    'total' => $feeBreakdown['miscFee'] ?? 0,
-                    'items' => 1,
-                ],
+            'allAssessments'              => [],
+            'transactions'                => [],
+            'payments'                    => [],
+            'feeBreakdown'                => [
+                ['category' => 'Tuition',       'total' => $feeBreakdown['tuitionFee'] ?? 0, 'items' => 1],
+                ['category' => 'Laboratory',    'total' => $feeBreakdown['labFee'] ?? 0,     'items' => 1],
+                ['category' => 'Miscellaneous', 'total' => $feeBreakdown['miscFee'] ?? 0,    'items' => 1],
+                ['category' => 'Registration',  'total' => 0.00,                              'items' => 1],
             ],
-            'backUrl' => route('student-fees.index'),
+            'miscItems'                   => config('fees.misc_items', []),
+            'backUrl'                     => route('student-fees.index'),
             'enrolledSubjectsByAssessment' => [],
         ]);
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  EDIT — reopen assessment for correction
+    //  EDIT
+    //
+    //  FIX: Added explicit admin-only guard. Even though the route
+    //  is now accessible to accounting (to prevent 404), only admins
+    //  can actually load the edit form. Accounting gets a redirect.
     // ─────────────────────────────────────────────────────────────
 
     public function edit(int $userId): Response
     {
+        // Enforce admin-only at the controller level as a second gate.
+        // The route is reachable by accounting to avoid the 404/redirect
+        // loop, but only admins can proceed past this point.
+        $authUser = auth()->user();
+        $authRole = $authUser->role instanceof \App\Enums\UserRoleEnum
+            ? $authUser->role->value
+            : (string) $authUser->role;
+
+        if ($authRole !== 'admin') {
+            return redirect()
+                ->route('student-fees.show', $userId)
+                ->with('flash.warning', 'Only administrators can edit assessments.');
+        }
 
         $user       = User::findOrFail($userId);
         $assessment = StudentAssessment::where('user_id', $userId)
@@ -394,6 +418,7 @@ class StudentFeeController extends Controller
             'tuition_per_lec_unit' => config('fees.tuition_per_lec_unit', 364.00),
             'lab_fee_per_unit'     => config('fees.lab_fee_per_unit', 1656.00),
             'misc_fee_fixed'       => config('fees.misc_fee_fixed', 4700.00),
+            'misc_items'           => config('fees.misc_items', []),
             'payment_terms'        => config('fees.payment_terms', []),
         ];
 
@@ -406,69 +431,62 @@ class StudentFeeController extends Controller
                 'year_level' => $user->year_level,
             ],
             'assessment' => [
-                'id'           => $assessment->id,
-                'semester'     => $assessment->semester,
-                'school_year'  => $assessment->school_year,
-                'lec_units'    => $assessment->lec_units,
-                'lab_units'    => $assessment->lab_units,
+                'id'          => $assessment->id,
+                'semester'    => $assessment->semester,
+                'school_year' => $assessment->school_year,
+                'lec_units'   => $assessment->lec_units,
+                'lab_units'   => $assessment->lab_units,
             ],
             'feeRates' => $feeRates,
         ]);
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  UPDATE — recalculate assessment with new unit values
+    //  UPDATE
     // ─────────────────────────────────────────────────────────────
 
     public function update(Request $request, int $userId)
     {
-
         $validated = $request->validate([
-            'semester'     => ['required', 'in:1st,2nd,Summer'],
-            'school_year'  => ['required', 'string', 'max:20'],
-            'lec_units'    => ['required', 'integer', 'min:0', 'max:30'],
-            'lab_units'    => ['required', 'integer', 'min:0', 'max:10'],
+            'semester'    => ['required', 'in:1st,2nd,Summer'],
+            'school_year' => ['required', 'string', 'max:20'],
+            'lec_units'   => ['required', 'integer', 'min:0', 'max:30'],
+            'lab_units'   => ['required', 'integer', 'min:0', 'max:10'],
         ]);
 
         $assessment = StudentAssessment::where('user_id', $userId)
             ->where('status', 'active')
             ->firstOrFail();
 
-        // Only allow update if no payments have been made yet
         $paidTerms = $assessment->paymentTerms()
             ->where('status', '!=', 'unpaid')
             ->count();
 
         if ($paidTerms > 0) {
             return back()->withErrors([
-                'lec_units' => 'Cannot edit this assessment — payments have already been recorded. Please contact the admin.',
+                'lec_units' => 'Cannot edit this assessment — payments have already been recorded.',
             ]);
         }
 
         DB::transaction(function () use ($assessment, $validated, $userId) {
-            // Recompute fees
             $fees = $this->computeTotal(
                 (int) $validated['lec_units'],
                 (int) $validated['lab_units']
             );
 
-            // Update the assessment
             $assessment->update([
-                'semester'     => $validated['semester'],
-                'school_year'  => $validated['school_year'],
-                'lec_units'    => $validated['lec_units'],
-                'lab_units'    => $validated['lab_units'],
+                'semester'         => $validated['semester'],
+                'school_year'      => $validated['school_year'],
+                'lec_units'        => $validated['lec_units'],
+                'lab_units'        => $validated['lab_units'],
                 'total_assessment' => $fees['total'],
             ]);
 
-            // Delete old terms and regenerate
             $assessment->paymentTerms()->delete();
-            $terms = $this->buildPaymentTerms($fees['total']);
-            foreach ($terms as $term) {
+            foreach ($this->buildPaymentTerms($fees['total']) as $term) {
                 $assessment->paymentTerms()->create($term);
             }
 
-            // Update the charge transaction
             Transaction::where('user_id', $userId)
                 ->where('kind', 'charge')
                 ->where('semester', $validated['semester'])
@@ -487,6 +505,8 @@ class StudentFeeController extends Controller
                         'updated_at'  => now()->toISOString(),
                     ]),
                 ]);
+
+            AccountService::recalculate(User::find($userId));
         });
 
         return redirect()
@@ -495,7 +515,7 @@ class StudentFeeController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  SEARCH — live search for students (used by Create.vue)
+    //  SEARCH
     // ─────────────────────────────────────────────────────────────
 
     public function search(Request $request): \Illuminate\Http\JsonResponse
@@ -505,8 +525,8 @@ class StudentFeeController extends Controller
         $students = User::where('role', UserRoleEnum::STUDENT)
             ->where(function ($query) use ($q) {
                 $query->where('last_name', 'like', "%{$q}%")
-                    ->orWhere('first_name', 'like', "%{$q}%")
-                    ->orWhere('account_id', 'like', "%{$q}%");
+                      ->orWhere('first_name', 'like', "%{$q}%")
+                      ->orWhere('account_id', 'like', "%{$q}%");
             })
             ->where('is_active', true)
             ->select('id', 'last_name', 'first_name', 'account_id', 'course', 'year_level')
@@ -524,21 +544,17 @@ class StudentFeeController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  EXPORT PDF — download student assessment as PDF
+    //  EXPORT PDF
     // ─────────────────────────────────────────────────────────────
 
     public function exportPdf(Request $request, int $userId)
     {
-        $user = User::with('account', 'student')
-            ->findOrFail($userId);
+        $user = User::with('account', 'student')->findOrFail($userId);
 
-        // Fetch the assessment (either specified by query param or the latest active)
         $assessmentId = $request->query('assessment_id');
-        
+
         if ($assessmentId) {
-            // Cast to integer to handle potential string format
-            $assessmentId = (int) $assessmentId;
-            $assessment = StudentAssessment::where('id', $assessmentId)
+            $assessment = StudentAssessment::where('id', (int) $assessmentId)
                 ->where('user_id', $userId)
                 ->with('paymentTerms')
                 ->firstOrFail();
@@ -550,37 +566,22 @@ class StudentFeeController extends Controller
                 ->firstOrFail();
         }
 
-        // Build fee breakdown from the assessment data
         $fees = $this->computeTotal($assessment->lec_units, $assessment->lab_units);
-        
+
         $assessment->fee_breakdown = [
-            [
-                'category' => 'Tuition',
-                'name'     => 'Lecture Units',
-                'amount'   => $fees['tuitionFee'],
-            ],
-            [
-                'category' => 'Laboratory',
-                'name'     => 'Laboratory Units',
-                'amount'   => $fees['labFee'],
-            ],
-            [
-                'category' => 'Miscellaneous',
-                'name'     => 'Registration Fee',
-                'amount'   => $fees['miscFee'],
-            ],
+            ['category' => 'Tuition',       'name' => 'Lecture Units',     'amount' => $fees['tuitionFee']],
+            ['category' => 'Laboratory',    'name' => 'Laboratory Units',  'amount' => $fees['labFee']],
+            ['category' => 'Miscellaneous', 'name' => 'Miscellaneous Fees','amount' => $fees['miscFee']],
+            ['category' => 'Registration',  'name' => 'Registration Fee',  'amount' => 0.00],
         ];
 
-        // Get sorted payment terms
-        $paymentTerms = $assessment->paymentTerms()
-            ->orderBy('term_order')
-            ->get();
+        $paymentTerms = $assessment->paymentTerms()->orderBy('term_order')->get();
 
-        // Load and render PDF
         $pdf = Pdf::loadView('pdf.student-assessment', [
             'student'      => $user,
             'assessment'   => $assessment,
             'paymentTerms' => $paymentTerms,
+            'miscItems'    => config('fees.misc_items', []),
         ]);
 
         $pdf->setPaper('A4', 'portrait');
@@ -591,7 +592,7 @@ class StudentFeeController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  CREATE STUDENT — show the "create new student" form
+    //  CREATE STUDENT
     // ─────────────────────────────────────────────────────────────
 
     public function createStudent(): Response
@@ -602,16 +603,14 @@ class StudentFeeController extends Controller
             ->sort()
             ->values();
 
-        $yearLevels = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
-
         return Inertia::render('StudentFees/CreateStudent', [
-            'courses' => $courses,
-            'yearLevels' => $yearLevels,
+            'courses'    => $courses,
+            'yearLevels' => ['1st Year', '2nd Year', '3rd Year', '4th Year'],
         ]);
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  STORE STUDENT — save a new student account
+    //  STORE STUDENT
     // ─────────────────────────────────────────────────────────────
 
     public function storeStudent(Request $request)
@@ -637,9 +636,7 @@ class StudentFeeController extends Controller
                 'first_name'     => $request->first_name,
                 'middle_initial' => $request->middle_initial,
                 'email'          => $request->email,
-                'password'       => Hash::make(
-                    Str::random(16)
-                ),
+                'password'       => Hash::make(Str::random(16)),
                 'birthday'       => $request->birthday,
                 'year_level'     => $request->year_level,
                 'course'         => $request->course,
@@ -657,9 +654,9 @@ class StudentFeeController extends Controller
             ]);
 
             Account::create([
-                'user_id'          => $user->id,
-                'account_number'   => $accountId,
-                'balance'          => 0,
+                'user_id'        => $user->id,
+                'account_number' => $accountId,
+                'balance'        => 0,
             ]);
 
             DB::commit();
@@ -671,6 +668,84 @@ class StudentFeeController extends Controller
         return redirect()
             ->route('student-fees.index')
             ->with('success', 'Student account created successfully. You can now create an assessment for them.');
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  STORE PAYMENT
+    // ─────────────────────────────────────────────────────────────
+
+    public function storePayment(Request $request, int $userId)
+    {
+        $user = $request->user();
+
+        if ($user->role !== UserRoleEnum::ACCOUNTING) {
+            abort(403, 'Only accounting staff can record payments.');
+        }
+
+        $student = User::findOrFail($userId);
+        if (! $student->student) {
+            abort(404, 'Student account not found.');
+        }
+
+        $validated = $request->validate([
+            'amount'         => 'required|numeric|min:0.01',
+            'payment_method' => 'required|string|in:cash,gcash,bank_transfer,credit_card,debit_card',
+            'assessment_id'  => 'required|exists:student_assessments,id',
+            'payment_date'   => 'required|date',
+        ]);
+
+        try {
+            $assessment = StudentAssessment::findOrFail((int) $validated['assessment_id']);
+
+            if ($assessment->user_id !== $student->id) {
+                abort(403, 'Assessment does not belong to this student.');
+            }
+
+            $term = StudentPaymentTerm::where('student_assessment_id', $assessment->id)
+                ->where('balance', '>', 0)
+                ->orderBy('term_order')
+                ->first();
+
+            if (! $term) {
+                return back()->withErrors(['payment' => 'No outstanding payment terms found for this assessment.']);
+            }
+
+            $duplicateExists = Transaction::where('user_id', $student->id)
+                ->where('kind', 'payment')
+                ->whereIn('status', [PaymentStatus::PAID->value, PaymentStatus::AWAITING_APPROVAL->value])
+                ->whereJsonContains('meta->selected_term_id', $term->id)
+                ->whereDate('created_at', now()->toDateString())
+                ->where('amount', round((float) $validated['amount'], 2))
+                ->exists();
+
+            if ($duplicateExists) {
+                return back()->withErrors([
+                    'payment' => 'A payment of that amount for this term was already recorded today. Check the transaction history before proceeding.',
+                ]);
+            }
+
+            $paymentService = new StudentPaymentService();
+            $paidAmount     = round((float) $validated['amount'], 2);
+
+            $result = $paymentService->processPayment($student, $paidAmount, [
+                'payment_method'   => $validated['payment_method'],
+                'paid_at'          => $validated['payment_date'],
+                'description'      => 'Recorded by accounting staff',
+                'selected_term_id' => (int) $term->id,
+                'term_name'        => $term->term_name,
+                'year'             => explode('-', $assessment->school_year)[0],
+                'semester'         => $assessment->semester,
+            ], false);
+
+            return back()->with('success', 'Payment of ₱' . number_format($paidAmount, 2) . ' recorded successfully for ' . $student->last_name . ', ' . $student->first_name . '.');
+
+        } catch (\Exception $e) {
+            Log::error('storePayment failed', [
+                'user_id' => $userId,
+                'error'   => $e->getMessage(),
+            ]);
+            return back()->withErrors(['payment' => 'Payment processing failed: ' . $e->getMessage()]);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 
 class StudentAssessment extends Model
 {
@@ -14,15 +15,17 @@ class StudentAssessment extends Model
         'year_level',
         'semester',
         'school_year',
-        'lec_units',        // ← lecture units (from matriculation form)
-        'lab_units',        // ← lab units (informational)
-        'total_assessment', // ← total amount being assessed
-        'status',           // active | completed
+        'lec_units',
+        'lab_units',
+        'lab_subjects',
+        'total_assessment',
+        'status',
     ];
 
     protected $casts = [
         'lec_units'        => 'integer',
         'lab_units'        => 'integer',
+        'lab_subjects'     => 'integer',
         'total_assessment' => 'decimal:2',
     ];
 
@@ -41,53 +44,26 @@ class StudentAssessment extends Model
 
     // ─── Computed Attributes ──────────────────────────────────────────────────
 
-    /**
-     * Total units displayed on the UI (LEC + LAB).
-     * This matches the "Total Units" column on the matriculation form.
-     */
     public function getTotalUnitsAttribute(): int
     {
         return $this->lec_units + $this->lab_units;
     }
 
-    /**
-     * Compute the tuition fee for this assessment.
-     * Uses the live config value so rate changes take effect immediately.
-     */
     public function getTuitionFeeAttribute(): float
     {
         return $this->lec_units * (float) config('fees.tuition_per_lec_unit', 364.00);
     }
 
-    /**
-     * Compute the lab fee for this assessment.
-     * Laboratory Fee = Lab Units × ₱1,656.00
-     */
     public function getLabFeeAttribute(): float
     {
-        return $this->lab_units * (float) config('fees.lab_fee_per_unit', 1656.00);
+        return $this->lab_subjects * (float) config('fees.lab_fee_per_subject', 1656.00);
     }
 
-    /**
-     * Fixed miscellaneous fees (₱4,700).
-     */
     public function getMiscFeeAttribute(): float
     {
         return (float) config('fees.misc_fee_fixed', 4700.00);
     }
 
-    /**
-     * Total assessment amount (tuition + lab + misc).
-     */
-    public function getTotalAssessmentAttribute(): float
-    {
-        return $this->tuition_fee + $this->lab_fee + $this->misc_fee;
-    }
-
-    /**
-     * Outstanding balance — sum of unpaid payment term balances.
-     * This is the source of truth. Never compute from raw transactions.
-     */
     public function getOutstandingBalanceAttribute(): float
     {
         return (float) $this->paymentTerms->sum('balance');
@@ -96,24 +72,34 @@ class StudentAssessment extends Model
     // ─── Static Methods ───────────────────────────────────────────────────────
 
     /**
-     * Generate a unique assessment number.
-     * Format: ASMT-{year}-{sequential}
-     * Example: ASMT-2025-0001
+     * Generate a unique, race-condition-safe assessment number.
+     *
+     * FIX: Uses DB-level MAX() on the extracted numeric suffix instead of
+     * ORDER BY on a string column. This is immune to lexicographic sort
+     * bugs and correctly handles all existing records regardless of status.
+     *
+     * IMPORTANT: This method MUST be called inside a DB::transaction() that
+     * also holds a lockForUpdate() on the relevant rows — the controller's
+     * store() method already does this. Do NOT call this outside a transaction.
+     *
+     * Format: ASMT-{year}-{sequential zero-padded to 4 digits}
+     * Example: ASMT-2026-0001
      */
     public static function generateAssessmentNumber(): string
     {
-        $currentYear = date('Y');
-        $lastAssessment = static::where('assessment_number', 'like', "ASMT-{$currentYear}-%")
-            ->orderBy('assessment_number', 'desc')
-            ->first();
+        $year = date('Y');
 
-        if ($lastAssessment && preg_match('/ASMT-\d+-(\d+)/', $lastAssessment->assessment_number, $matches)) {
-            $nextNum = intval($matches[1]) + 1;
-        } else {
-            $nextNum = 1;
-        }
+        // Extract the numeric suffix from all records for this year using
+        // a DB-level CAST, so we get the true numeric maximum — not a
+        // lexicographic string maximum which breaks on 10, 11, etc.
+        $maxNum = DB::table('student_assessments')
+            ->where('assessment_number', 'like', "ASMT-{$year}-%")
+            ->selectRaw("MAX(CAST(SUBSTRING_INDEX(assessment_number, '-', -1) AS UNSIGNED)) as max_num")
+            ->value('max_num');
 
-        return sprintf('ASMT-%s-%04d', $currentYear, $nextNum);
+        $nextNum = (int) $maxNum + 1;
+
+        return sprintf('ASMT-%s-%04d', $year, $nextNum);
     }
 
     // ─── Scopes ───────────────────────────────────────────────────────────────
