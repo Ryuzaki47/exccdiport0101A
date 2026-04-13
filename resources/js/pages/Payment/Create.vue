@@ -1,3 +1,94 @@
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import axios from 'axios'
+
+const props = defineProps<{
+    student: { id: number; name?: string }
+    publicKey?: string
+}>()
+
+const form = ref({
+    amount: '',
+    description: '',
+    reference_number: '',
+})
+
+const selectedMethod = ref('ewallet')
+const loading = ref(false)
+
+const paymentMethods = [
+    { value: 'ewallet', label: 'GCash / Maya', icon: '📱' },
+    { value: 'card',    label: 'Credit Card',  icon: '💳' },
+    { value: 'bank_transfer', label: 'PNB Transfer', icon: '🏦' },
+]
+
+const buttonLabel = computed(() => {
+    if (selectedMethod.value === 'bank_transfer') return '📤 Submit Bank Transfer'
+    if (selectedMethod.value === 'card') return '💳 Pay with Card'
+    return '📱 Pay with GCash / Maya'
+})
+
+async function submitPayment() {
+    if (!form.value.amount || !form.value.description) return
+    loading.value = true
+
+    // Kuhanin ang CSRF token mula sa meta tag (auto-inject ng Laravel/Inertia)
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')
+        ?.getAttribute('content') ?? ''
+
+    try {
+        if (selectedMethod.value === 'bank_transfer') {
+
+            const res = await fetch('/student/payment/bank-transfer', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({
+                    student_id:       props.student.id,
+                    amount:           form.value.amount,
+                    description:      form.value.description,
+                    reference_number: form.value.reference_number,
+                }),
+            })
+
+            if (!res.ok) throw new Error('Bank transfer failed')
+            alert('✅ Bank transfer submitted! Please wait for admin verification.')
+
+        } else {
+
+            const res = await fetch('/student/payment/checkout', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({
+                    student_id:  props.student.id,
+                    amount:      form.value.amount,
+                    description: form.value.description,
+                }),
+            })
+
+            if (!res.ok) {
+                const err = await res.json()
+                throw new Error(err?.error ?? 'Checkout failed')
+            }
+
+            const data = await res.json()
+            window.location.href = data.checkout_url
+        }
+
+    } catch (e: any) {
+        alert('❌ ' + (e?.message ?? 'Something went wrong. Please try again.'))
+    } finally {
+        loading.value = false
+    }
+}
+</script>
 <template>
     <div class="min-h-screen bg-gray-50 p-6">
         <div class="max-w-2xl mx-auto">
@@ -109,94 +200,3 @@
         </div>
     </div>
 </template>
-
-<script setup lang="ts">
-import { ref, computed } from 'vue'
-import axios from 'axios'
-
-const props = defineProps<{
-    student: { id: number; name?: string }
-    publicKey?: string
-}>()
-
-const form = ref({
-    amount: '',
-    description: '',
-    reference_number: '',
-})
-
-const selectedMethod = ref('ewallet')
-const loading = ref(false)
-
-const paymentMethods = [
-    { value: 'ewallet', label: 'GCash / Maya', icon: '📱' },
-    { value: 'card',    label: 'Credit Card',  icon: '💳' },
-    { value: 'bank_transfer', label: 'PNB Transfer', icon: '🏦' },
-]
-
-const buttonLabel = computed(() => {
-    if (selectedMethod.value === 'bank_transfer') return '📤 Submit Bank Transfer'
-    if (selectedMethod.value === 'card') return '💳 Pay with Card'
-    return '📱 Pay with GCash / Maya'
-})
-
-async function submitPayment() {
-    if (!form.value.amount || !form.value.description) return
-    loading.value = true
-
-    // Kuhanin ang CSRF token mula sa meta tag (auto-inject ng Laravel/Inertia)
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')
-        ?.getAttribute('content') ?? ''
-
-    try {
-        if (selectedMethod.value === 'bank_transfer') {
-
-            const res = await fetch('/student/payment/bank-transfer', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': csrfToken,
-                    'Accept': 'application/json',
-                },
-                body: JSON.stringify({
-                    student_id:       props.student.id,
-                    amount:           form.value.amount,
-                    reference_number: form.value.reference_number,
-                }),
-            })
-
-            if (!res.ok) throw new Error('Bank transfer failed')
-            alert('✅ Bank transfer submitted! Please wait for admin verification.')
-
-        } else {
-
-            const res = await fetch('/student/payment/checkout', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': csrfToken,
-                    'Accept': 'application/json',
-                },
-                body: JSON.stringify({
-                    student_id:  props.student.id,
-                    amount:      form.value.amount,
-                    description: form.value.description,
-                }),
-            })
-
-            if (!res.ok) {
-                const err = await res.json()
-                throw new Error(err?.error ?? 'Checkout failed')
-            }
-
-            const data = await res.json()
-            window.location.href = data.checkout_url
-        }
-
-    } catch (e: any) {
-        alert('❌ ' + (e?.message ?? 'Something went wrong. Please try again.'))
-    } finally {
-        loading.value = false
-    }
-}
-</script>
