@@ -8,6 +8,7 @@ use App\Models\StudentPaymentTerm;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Enums\UserRoleEnum;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -518,5 +519,72 @@ class StudentFeeController extends Controller
             ]);
 
         return response()->json(['students' => $students]);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  EXPORT PDF — download student assessment as PDF
+    // ─────────────────────────────────────────────────────────────
+
+    public function exportPdf(Request $request, int $userId)
+    {
+        $user = User::with('account', 'student')
+            ->findOrFail($userId);
+
+        // Fetch the assessment (either specified by query param or the latest active)
+        $assessmentId = $request->query('assessment_id');
+        
+        if ($assessmentId) {
+            // Cast to integer to handle potential string format
+            $assessmentId = (int) $assessmentId;
+            $assessment = StudentAssessment::where('id', $assessmentId)
+                ->where('user_id', $userId)
+                ->with('paymentTerms')
+                ->firstOrFail();
+        } else {
+            $assessment = StudentAssessment::where('user_id', $userId)
+                ->where('status', 'active')
+                ->with('paymentTerms')
+                ->latest()
+                ->firstOrFail();
+        }
+
+        // Build fee breakdown from the assessment data
+        $fees = $this->computeTotal($assessment->lec_units, $assessment->lab_units);
+        
+        $assessment->fee_breakdown = [
+            [
+                'category' => 'Tuition',
+                'name'     => 'Lecture Units',
+                'amount'   => $fees['tuitionFee'],
+            ],
+            [
+                'category' => 'Laboratory',
+                'name'     => 'Laboratory Units',
+                'amount'   => $fees['labFee'],
+            ],
+            [
+                'category' => 'Miscellaneous',
+                'name'     => 'Registration Fee',
+                'amount'   => $fees['miscFee'],
+            ],
+        ];
+
+        // Get sorted payment terms
+        $paymentTerms = $assessment->paymentTerms()
+            ->orderBy('term_order')
+            ->get();
+
+        // Load and render PDF
+        $pdf = Pdf::loadView('pdf.student-assessment', [
+            'student'      => $user,
+            'assessment'   => $assessment,
+            'paymentTerms' => $paymentTerms,
+        ]);
+
+        $pdf->setPaper('A4', 'portrait');
+
+        $filename = 'assessment-' . ($user->account_id ?? 'student') . '-' . $assessment->id . '.pdf';
+
+        return $pdf->download($filename);
     }
 }
