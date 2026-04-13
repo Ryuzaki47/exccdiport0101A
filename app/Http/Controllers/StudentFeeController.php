@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Account;
 use App\Models\Student;
 use App\Models\StudentAssessment;
 use App\Models\StudentPaymentTerm;
@@ -11,6 +12,7 @@ use App\Enums\UserRoleEnum;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -586,5 +588,101 @@ class StudentFeeController extends Controller
         $filename = 'assessment-' . ($user->account_id ?? 'student') . '-' . $assessment->id . '.pdf';
 
         return $pdf->download($filename);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  CREATE STUDENT — show the "create new student" form
+    // ─────────────────────────────────────────────────────────────
+
+    public function createStudent(): Response
+    {
+        $courses = User::where('role', UserRoleEnum::STUDENT)
+            ->distinct()
+            ->pluck('course')
+            ->sort()
+            ->values();
+
+        $yearLevels = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
+
+        return Inertia::render('StudentFees/CreateStudent', [
+            'courses' => $courses,
+            'yearLevels' => $yearLevels,
+        ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  STORE STUDENT — save a new student account
+    // ─────────────────────────────────────────────────────────────
+
+    public function storeStudent(Request $request)
+    {
+        $request->validate([
+            'last_name'      => 'required|string|max:255',
+            'first_name'     => 'required|string|max:255',
+            'middle_initial' => 'nullable|string|max:10',
+            'email'          => 'required|string|lowercase|email|max:255|unique:' . User::class,
+            'birthday'       => 'required|date',
+            'year_level'     => 'required|string|max:50',
+            'course'         => 'required|string|max:255',
+            'address'        => 'required|string|max:255',
+            'phone'          => 'required|string|max:20',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $accountId = $this->generateUniqueAccountId();
+
+            $user = User::create([
+                'last_name'      => $request->last_name,
+                'first_name'     => $request->first_name,
+                'middle_initial' => $request->middle_initial,
+                'email'          => $request->email,
+                'password'       => Hash::make(
+                    Str::random(16)
+                ),
+                'birthday'       => $request->birthday,
+                'year_level'     => $request->year_level,
+                'course'         => $request->course,
+                'address'        => $request->address,
+                'phone'          => $request->phone,
+                'account_id'     => $accountId,
+                'status'         => User::STATUS_ACTIVE,
+                'role'           => UserRoleEnum::STUDENT,
+            ]);
+
+            Student::create([
+                'user_id'           => $user->id,
+                'student_id'        => $accountId,
+                'enrollment_status' => 'active',
+            ]);
+
+            Account::create([
+                'user_id'          => $user->id,
+                'account_number'   => $accountId,
+                'balance'          => 0,
+            ]);
+
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+
+        return redirect()
+            ->route('student-fees.index')
+            ->with('success', 'Student account created successfully. You can now create an assessment for them.');
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  HELPER: Generate unique account ID
+    // ─────────────────────────────────────────────────────────────
+
+    private function generateUniqueAccountId(): string
+    {
+        do {
+            $id = date('Y') . '-' . str_pad(rand(1, 9999), 4, '0', STR_PAD_LEFT);
+        } while (User::where('account_id', $id)->exists());
+
+        return $id;
     }
 }

@@ -1,9 +1,10 @@
 <?php
+
 namespace App\Http\Controllers;
 
+use App\Enums\PaymentStatus;
 use App\Models\Account;
 use App\Models\Notification;
-use App\Models\Payment;
 use App\Models\StudentAssessment;
 use App\Models\StudentEnrollment;
 use App\Models\StudentPaymentTerm;
@@ -29,46 +30,28 @@ class StudentAccountController extends Controller
 
         $allAssessments = StudentAssessment::where('user_id', $user->id)
             ->where('status', 'active')
-            ->with(['paymentTerms' => fn($q) => $q->orderBy('term_order')])
+            ->with(['paymentTerms' => fn ($q) => $q->orderBy('term_order')])
             ->orderBy('school_year')
             ->get()
-            ->map(function($a) {
+            ->map(function ($a) {
                 $feeBreakdown = $this->computeTotal($a->lec_units, $a->lab_units);
                 return [
-                    'id'               => $a->id,
-                    'assessment_number'=> $a->assessment_number,
-                    'year_level'       => $a->year_level,
-                    'semester'         => $a->semester,
-                    'school_year'      => $a->school_year,
-                    'course'           => $a->course,
-                    'total_assessment' => (float) $a->total_assessment,
-                    'tuition_fee'      => (float) $feeBreakdown['tuitionFee'],
-                    'other_fees'       => (float) ($feeBreakdown['labFee'] + $feeBreakdown['miscFee']),
-                    'fee_breakdown'    => [
-                        [
-                            'category' => 'Tuition',
-                            'name'     => 'Lecture Units',
-                            'code'     => 'TUI',
-                            'units'    => $a->lec_units,
-                            'amount'   => $feeBreakdown['tuitionFee'],
-                        ],
-                        [
-                            'category' => 'Laboratory',
-                            'name'     => 'Laboratory Units',
-                            'code'     => 'LAB',
-                            'units'    => $a->lab_units,
-                            'amount'   => $feeBreakdown['labFee'],
-                        ],
-                        [
-                            'category' => 'Miscellaneous',
-                            'name'     => 'Registration Fee',
-                            'code'     => 'REG',
-                            'units'    => 1,
-                            'amount'   => $feeBreakdown['miscFee'],
-                        ],
+                    'id'                => $a->id,
+                    'assessment_number' => $a->assessment_number,
+                    'year_level'        => $a->year_level,
+                    'semester'          => $a->semester,
+                    'school_year'       => $a->school_year,
+                    'course'            => $a->course,
+                    'total_assessment'  => (float) $a->total_assessment,
+                    'tuition_fee'       => (float) $feeBreakdown['tuitionFee'],
+                    'other_fees'        => (float) ($feeBreakdown['labFee'] + $feeBreakdown['miscFee']),
+                    'fee_breakdown'     => [
+                        ['category' => 'Tuition',       'name' => 'Lecture Units',     'code' => 'TUI', 'units' => $a->lec_units, 'amount' => $feeBreakdown['tuitionFee']],
+                        ['category' => 'Laboratory',    'name' => 'Laboratory Units',  'code' => 'LAB', 'units' => $a->lab_units, 'amount' => $feeBreakdown['labFee']],
+                        ['category' => 'Miscellaneous', 'name' => 'Registration Fee',  'code' => 'REG', 'units' => 1,             'amount' => $feeBreakdown['miscFee']],
                     ],
-                    'status'           => $a->status,
-                    'created_at'       => $a->created_at,
+                    'status'     => $a->status,
+                    'created_at' => $a->created_at,
                 ];
             });
 
@@ -78,36 +61,49 @@ class StudentAccountController extends Controller
                 ->get()
             : collect();
 
+        // Only payment transactions (kind = payment)
         $transactions = Transaction::where('user_id', $user->id)
             ->where('kind', 'payment')
             ->orderBy('created_at', 'desc')
             ->get();
 
-        // Calculate totalPaid for the current (latest) assessment only
-        // This is the sum of all successful payment transactions (status='paid') 
-        // for the current assessment, excluding charge transactions.
+        // totalPaid: sum of verified paid payments for the current assessment
         $totalPaid = 0;
         if ($assessment) {
             $totalPaid = (float) $transactions
-                ->where('status', 'paid')
+                ->where('status', PaymentStatus::PAID->value)
                 ->filter(function ($txn) use ($assessment) {
                     $assessmentId = data_get($txn->meta, 'assessment_id');
-                    return $assessmentId === $assessment->id;
+                    // Include if explicitly linked to this assessment OR if no link (older records)
+                    return $assessmentId === null || $assessmentId === $assessment->id;
                 })
                 ->sum('amount');
         }
 
-        $notifications = Notification::where(function($q) use ($user) {
-                $q->where('user_id', $user->id)
-                  ->orWhere('target_role', 'student');
-            })
+        // Pending approval payments — shown as banners, block duplicate submissions
+        $pendingApprovalPayments = $transactions
+            ->where('status', PaymentStatus::AWAITING_APPROVAL->value)
+            ->map(fn ($txn) => [
+                'id'               => $txn->id,
+                'reference'        => $txn->reference,
+                'amount'           => (float) $txn->amount,
+                'selected_term_id' => $txn->meta['selected_term_id'] ?? null,
+                'term_name'        => $txn->meta['term_name'] ?? $txn->type ?? 'Payment',
+                'created_at'       => $txn->created_at,
+            ])
+            ->values();
+
+        $notifications = Notification::where(function ($q) use ($user) {
+            $q->where('user_id', $user->id)
+                ->orWhere('target_role', 'student');
+        })
             ->where('is_active', true)
             ->whereNull('dismissed_at')
             ->get();
 
-        // enrolledSubjectsByAssessment
+        // Enrolled subjects by assessment
         $assessmentTermIndex = $allAssessments->keyBy(
-            fn($a) => $a['school_year'] . '||' . $a['semester']
+            fn ($a) => $a['school_year'] . '||' . $a['semester']
         );
 
         $enrollmentRows = StudentEnrollment::where('user_id', $user->id)
@@ -126,22 +122,19 @@ class StudentAccountController extends Controller
         }
 
         return Inertia::render('Student/AccountOverview', [
-            'account'                      => $account,
-            'transactions'                 => $transactions,
-            'totalPaid'                    => $totalPaid,
-            'fees'                         => [],
-            'latestAssessment'             => $assessment,
-            'allAssessments'               => $allAssessments,
-            'paymentTerms'                 => $paymentTerms,
-            'notifications'                => $notifications,
-            'pendingApprovalPayments'      => [],
-            'enrolledSubjectsByAssessment' => $enrolledSubjectsByAssessment,
+            'account'                       => $account,
+            'transactions'                  => $transactions->values(),
+            'totalPaid'                     => $totalPaid,
+            'fees'                          => [],
+            'latestAssessment'              => $assessment,
+            'allAssessments'                => $allAssessments,
+            'paymentTerms'                  => $paymentTerms->values(),
+            'notifications'                 => $notifications->values(),
+            'pendingApprovalPayments'       => $pendingApprovalPayments,
+            'enrolledSubjectsByAssessment'  => $enrolledSubjectsByAssessment,
         ]);
     }
 
-    /**
-     * Compute fee totals from lecture and lab units.
-     */
     private function computeTotal(int $lecUnits, int $labUnits): array
     {
         $tuitionPerUnit = (float) config('fees.tuition_per_lec_unit', 364.00);

@@ -324,15 +324,24 @@ class AdditionalStudentSeeder extends Seeder
 
         // ── Resolve fees ───────────────────────────────────────────────────────
         $fees = self::FEE_STRUCTURES[$yearLevel][$semester] ?? [
-            ['category' => 'Academic', 'name' => 'Tuition Fee', 'amount' => 15000.00],
+            ['category' => 'Tuition', 'name' => 'Tuition Fee', 'amount' => 15000.00],
         ];
 
-        $tuitionFee      = collect($fees)->where('category', 'Academic')->sum('amount');
-        $otherFees       = collect($fees)->where('category', '!=', 'Academic')->sum('amount');
+        $tuitionFee      = collect($fees)->where('category', 'Tuition')->sum('amount');
+        $otherFees       = collect($fees)->where('category', '!=', 'Tuition')->sum('amount');
         $totalAssessment = round($tuitionFee + $otherFees, 2);
         $yearNum         = (int) explode('-', $schoolYear)[0];
         $semStart        = $this->semStart($semester, $schoolYear);
         $allPaid         = count($paidOrders) === count(self::TERM_DEFINITIONS);
+
+        // Calculate units based on year level
+        $unitMap = [
+            '1st Year' => ['lec' => 48, 'lab' => 4],
+            '2nd Year' => ['lec' => 48, 'lab' => 3],
+            '3rd Year' => ['lec' => 45, 'lab' => 2],
+            '4th Year' => ['lec' => 42, 'lab' => 2],
+        ];
+        $units = $unitMap[$yearLevel] ?? ['lec' => 48, 'lab' => 3];
 
         // ── Assessment record ──────────────────────────────────────────────────
         $assessment = StudentAssessment::create([
@@ -341,17 +350,10 @@ class AdditionalStudentSeeder extends Seeder
             'year_level'        => $yearLevel,
             'semester'          => $semester,
             'school_year'       => $schoolYear,
-            'tuition_fee'       => $tuitionFee,
-            'other_fees'        => $otherFees,
+            'lec_units'         => $units['lec'],
+            'lab_units'         => $units['lab'],
             'total_assessment'  => $totalAssessment,
-            'subjects'          => [],
-            'fee_breakdown'     => collect($fees)->map(fn ($f) => [
-                'category' => $f['category'],
-                'name'     => $f['name'],
-                'amount'   => $f['amount'],
-            ])->values()->toArray(),
-            'status'     => 'active',
-            'created_by' => $this->getOrFindAdminUserId(),
+            'status'            => 'active',
         ]);
 
         // DISABLED: Do not create charge transactions during seeding

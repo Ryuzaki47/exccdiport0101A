@@ -4,17 +4,15 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useDataFormatting } from '@/composables/useDataFormatting';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, router, useForm, usePage } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import { AlertCircle, CalendarClock, CheckCircle, Clock, XCircle } from 'lucide-vue-next';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
 const { formatCurrency, formatDate, getPaymentTermStatusConfig, getTransactionStatusConfig, getAssessmentStatusConfig } = useDataFormatting();
 
-type Fee = {
-    name: string;
-    amount: number;
-    category?: string;
-};
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type Fee = { name: string; amount: number; category?: string };
 
 type Transaction = {
     id: number;
@@ -24,29 +22,17 @@ type Transaction = {
     amount: number;
     status: string;
     created_at: string;
-    fee?: {
-        name: string;
-        category: string;
-    };
+    fee?: { name: string; category: string };
     meta?: {
         fee_name?: string;
         description?: string;
         assessment_id?: number;
-        subject_code?: string;
-        subject_name?: string;
+        term_name?: string;
+        selected_term_id?: number;
     };
 };
 
-type Account = {
-    id: number;
-    balance: number;
-    user_id: number;
-};
-
-type CurrentTerm = {
-    year: number;
-    semester: string;
-};
+type Account = { id: number; balance: number; user_id: number };
 
 type Assessment = {
     id: number;
@@ -68,7 +54,7 @@ type PaymentTerm = {
     percentage: number;
     amount: number;
     balance: number;
-    due_date: string;
+    due_date: string | null;
     status: string;
     remarks: string | null;
     paid_date: string | null;
@@ -84,13 +70,14 @@ type Notification = {
     is_active: boolean;
     start_date?: string;
     end_date?: string;
-    due_date?: string | null; // actual payment deadline (structured column)
-    payment_term_id?: number | null; // links to the originating payment term
+    due_date?: string | null;
+    payment_term_id?: number | null;
     dismissed_at?: string | null;
     created_at: string;
 };
 
-// ── User data ──────────────────────────────────────────────────────────────────
+// ── Props ─────────────────────────────────────────────────────────────────────
+
 const page = usePage();
 const user = computed(() => page.props.auth?.user);
 
@@ -100,7 +87,6 @@ const props = withDefaults(
         transactions: Transaction[];
         totalPaid: number;
         fees: Fee[];
-        currentTerm?: CurrentTerm;
         tab?: string;
         latestAssessment?: Assessment;
         paymentTerms?: PaymentTerm[];
@@ -137,10 +123,6 @@ const props = withDefaults(
         enrolledSubjectsByAssessment?: Record<number, number[]>;
     }>(),
     {
-        currentTerm: () => ({
-            year: new Date().getFullYear(),
-            semester: '1st Sem',
-        }),
         tab: 'fees',
         paymentTerms: () => [],
         notifications: () => [],
@@ -150,73 +132,50 @@ const props = withDefaults(
     },
 );
 
+// ── State ─────────────────────────────────────────────────────────────────────
+
 const breadcrumbs = [{ title: 'My Account' }];
 
-// Get tab from URL if prop is not working
-const getTabFromUrl = (): 'fees' | 'history' | 'payment' => {
+const getTabFromUrl = (): 'fees' | 'history' => {
     const urlParams = new URLSearchParams(window.location.search);
     const tab = urlParams.get('tab');
-
-    if (tab === 'payment') return 'payment';
     if (tab === 'history') return 'history';
     return 'fees';
 };
 
-// Set initial tab - try prop first, then URL
-const getInitialTab = (): 'fees' | 'history' | 'payment' => {
-    if (props.tab === 'payment' || props.tab === 'history') {
-        return props.tab;
-    }
+const getInitialTab = (): 'fees' | 'history' => {
+    if (props.tab === 'history') return 'history';
     return getTabFromUrl();
 };
 
-const activeTab = ref<'fees' | 'history' | 'payment'>(getInitialTab());
+const activeTab = ref<'fees' | 'history'>(getInitialTab());
 
-// Watch for prop changes (in case of navigation)
-watch(
-    () => props.tab,
-    (newTab) => {
-        if (newTab === 'payment' || newTab === 'history') {
-            activeTab.value = newTab;
-        }
-    },
-);
-
-// Get term_id from URL to pre-select
-const getTermIdFromUrl = (): number | null => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const termId = urlParams.get('term_id');
-    return termId ? parseInt(termId, 10) : null;
-};
-
-// Ensure correct tab on mount and pre-select term if provided
-const autoRefreshInterval = ref<ReturnType<typeof setInterval> | null>(null);
-
-// Check if there are any awaiting_approval transactions
-const hasAwaitingApprovals = computed(() => {
-    return props.transactions.some((t) => t.status === 'awaiting_approval');
+watch(() => props.tab, (newTab) => {
+    if (newTab === 'history') activeTab.value = 'history';
 });
 
-// Filter active, non-dismissed notifications
-const activeNotifications = computed(() => {
-    return props.notifications
-        .filter((n) => !n.dismissed_at && !n.is_complete && !hiddenNotifications.value.has(n.id))
+const autoRefreshInterval = ref<ReturnType<typeof setInterval> | null>(null);
+
+const hasAwaitingApprovals = computed(() =>
+    props.transactions.some((t) => t.status === 'awaiting_approval'),
+);
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+const hiddenNotifications = ref<Set<number>>(new Set());
+
+const activeNotifications = computed(() =>
+    props.notifications
+        .filter((n) => !n.dismissed_at && !hiddenNotifications.value.has(n.id))
         .sort((a, b) => {
-            // payment_due banners first
             if (a.type === 'payment_due' && b.type !== 'payment_due') return -1;
             if (a.type !== 'payment_due' && b.type === 'payment_due') return 1;
-            // within same type: soonest due_date first
             if (a.due_date && b.due_date) {
                 return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
             }
             return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-        });
-});
-
-// Track notifications that are auto-hidden
-const hiddenNotifications = ref<Set<number>>(new Set());
-
-// ── Notification due-date helpers ─────────────────────────────────────────────
+        }),
+);
 
 const getDueDateColor = (dueDateStr: string | null | undefined): 'red' | 'amber' | 'green' => {
     if (!dueDateStr) return 'amber';
@@ -236,330 +195,69 @@ const dueDateLabel = (dueDateStr: string | null | undefined): string => {
     return `Due ${formatDate(dueDateStr)}`;
 };
 
-// Dismiss notification — only triggered by the student clicking ✕
-// Notifications are never auto-dismissed; they persist until the student
-// explicitly closes them or the backend marks them complete/expired.
 const dismissNotification = (notificationId: number) => {
     hiddenNotifications.value.add(notificationId);
     router.post(route('notifications.dismiss', notificationId));
 };
 
-onMounted(() => {
-    const urlTab = getTabFromUrl();
-    if (urlTab === 'payment' || urlTab === 'history') {
-        activeTab.value = urlTab;
-    }
+// ── Financial computations ────────────────────────────────────────────────────
 
-    // Pre-select term if provided in URL
-    const termId = getTermIdFromUrl();
-    if (termId) {
-        paymentForm.selected_term_id = termId;
-    }
-
-    // Auto-refresh page every 10 seconds if there are awaiting_approval payments
-    // This ensures that when accounting approves a payment, the student sees it update automatically
-    const startAutoRefresh = () => {
-        if (autoRefreshInterval.value) {
-            clearInterval(autoRefreshInterval.value);
-        }
-
-        if (hasAwaitingApprovals.value) {
-            autoRefreshInterval.value = setInterval(() => {
-                router.reload();
-            }, 10000); // Refresh every 10 seconds
-        }
-    };
-
-    // Start auto-refresh if needed
-    startAutoRefresh();
-
-    // Watch for changes in awaiting approvals status
-    watch(hasAwaitingApprovals, (newVal) => {
-        if (newVal) {
-            startAutoRefresh();
-        } else if (autoRefreshInterval.value) {
-            clearInterval(autoRefreshInterval.value);
-            autoRefreshInterval.value = null;
-        }
-    });
-
-    // ── Dismiss skeleton once props are fully resolved ────────────────────────
-    // nextTick guarantees the skeleton shows for at least one rendered frame
-    // before being replaced by real data, preventing a content flash.
-});
-
-// Clean up interval on unmount
-onUnmounted(() => {
-    if (autoRefreshInterval.value) {
-        clearInterval(autoRefreshInterval.value);
-        autoRefreshInterval.value = null;
-    }
-});
-
-const paymentForm = useForm({
-    amount: 0,
-    payment_method: 'gcash',
-    paid_at: new Date().toISOString().split('T')[0],
-    selected_term_id: null as number | null,
-});
-
-// Use latest assessment if available, otherwise calculate from fees
 const totalAssessmentFee = computed(() => {
-    if (props.latestAssessment) {
-        return Number(props.latestAssessment.total_assessment);
-    }
+    if (props.latestAssessment) return Number(props.latestAssessment.total_assessment);
     return props.fees.reduce((sum, fee) => sum + Number(fee.amount), 0);
 });
 
-// Calculate remaining balance from PAYMENT TERMS (not transactions)
-// Payment terms are the source of truth for student balances
 const remainingBalance = computed(() => {
-    // If we have payment terms, calculate from them (most accurate)
     if (props.paymentTerms && props.paymentTerms.length > 0) {
-        const outstandingBalance = props.paymentTerms.reduce((sum, term) => sum + Number(term.balance || 0), 0);
-        return Math.max(0, Math.round(outstandingBalance * 100) / 100);
+        return Math.max(0, Math.round(
+            props.paymentTerms.reduce((sum, t) => sum + Number(t.balance || 0), 0) * 100,
+        ) / 100);
     }
-
-    // Fallback to transaction-based calculation if no payment terms
-    const txs = props.transactions ?? [];
-    const charges = txs.filter((t) => t.kind === 'charge').reduce((sum, t) => sum + Number(t.amount || 0), 0);
-
-    const payments = txs.filter((t) => t.kind === 'payment' && t.status === 'paid').reduce((sum, t) => sum + Number(t.amount || 0), 0);
-
-    const diff = charges - payments;
-    const rounded = Math.round(diff * 100) / 100;
-
-    return rounded > 0 ? rounded : 0;
+    return 0;
 });
 
-// Track pending approval payments grouped by term
-const pendingPaymentsByTerm = computed(() => {
-    const pending: Record<number, number> = {};
-    props.pendingApprovalPayments?.forEach((payment) => {
-        if (payment.selected_term_id !== null) {
-            pending[payment.selected_term_id] = (pending[payment.selected_term_id] || 0) + payment.amount;
-        }
-    });
-    return pending;
-});
+const totalPaid = computed(() => props.totalPaid);
 
-// Calculate the effective balance (actual balance minus pending payments)
-const effectiveBalance = computed(() => {
-    if (!props.paymentTerms || props.paymentTerms.length === 0) {
-        return remainingBalance.value;
-    }
+// ── Payment terms ─────────────────────────────────────────────────────────────
 
-    const totalBalance = props.paymentTerms.reduce((sum, term) => sum + Number(term.balance || 0), 0);
-    const totalPending = props.pendingApprovalPayments?.reduce((sum, p) => sum + p.amount, 0) || 0;
-
-    return Math.max(0, Math.round((totalBalance - totalPending) * 100) / 100);
-});
-
-// Check if there are any pending payments
-const hasPendingPayments = computed(() => {
-    return props.pendingApprovalPayments && props.pendingApprovalPayments.length > 0;
-});
-
-// Get pending payments for a specific term
-const getPendingAmountForTerm = (termId: number): number => {
-    return pendingPaymentsByTerm.value[termId] || 0;
-};
-
-const availableTermsForPayment = computed(() => {
-    const unpaidTerms = props.paymentTerms?.filter((term) => term.balance > 0).sort((a, b) => a.term_order - b.term_order) || [];
-
-    // Only the first unpaid term is selectable
-    const firstUnpaidIndex = unpaidTerms.length > 0 ? 0 : -1;
-
-    return unpaidTerms.map((term, index) => {
-        const pendingAmount = getPendingAmountForTerm(term.id);
-        const hasPending = pendingAmount > 0;
-
-        return {
-            id: term.id,
-            label: term.term_name,
-            term_name: term.term_name,
-            value: term.id,
-            balance: term.balance,
-            amount: term.amount,
-            due_date: term.due_date,
-            status: term.status,
-            isSelectable: index === firstUnpaidIndex && !hasPending,
-            hasCarryover: term.remarks?.toLowerCase().includes('carried') || false,
-            hasPending,
-            pendingAmount,
-        };
-    });
-});
-
-// Get the first unpaid term ID (for "Pay Now" button visibility)
 const firstUnpaidTermId = computed(() => {
-    const unpaid = props.paymentTerms?.filter((t) => t.balance > 0).sort((a, b) => a.term_order - b.term_order);
+    const unpaid = props.paymentTerms
+        ?.filter((t) => t.balance > 0)
+        .sort((a, b) => a.term_order - b.term_order);
     return unpaid?.[0]?.id ?? null;
 });
 
-// ── Current-term helpers ──────────────────────────────────────────────────────
-// Derive the start-year string from the school_year field (e.g. "2025-2026" → "2025")
-const currentTermYear = computed<string | null>(() => {
-    if (!props.latestAssessment?.school_year) return null;
-    return String(props.latestAssessment.school_year).split('-')[0] ?? null;
-});
-
-const currentTermSem = computed<string | null>(() => props.latestAssessment?.semester ?? null);
-
-// Payment history — show all payment transactions sorted by most recent first.
-// Don't filter by year/semester as it may exclude valid payments.
-const paymentHistory = computed(() => {
-    return props.transactions
-        .filter((t) => t.kind === 'payment')
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-});
-
-// Total paid for the current assessment — passed directly from backend
-const totalPaid = computed(() => {
-    return props.totalPaid;
-});
-
-const selectedTermInfo = computed(() => {
-    if (!paymentForm.selected_term_id) {
-        return null;
-    }
-    return availableTermsForPayment.value.find((term) => term.id === paymentForm.selected_term_id) || null;
-});
-
-const submitButtonMessage = computed(() => {
-    if (!paymentForm.selected_term_id) {
-        return 'Select a Payment Term';
-    }
-
-    const selectedTermHasPending = getPendingAmountForTerm(paymentForm.selected_term_id) > 0;
-    if (selectedTermHasPending) {
-        const pending = getPendingAmountForTerm(paymentForm.selected_term_id);
-        return `⏳ Awaiting Approval (₱${formatCurrency(pending)}) — Cannot Submit`;
-    }
-
-    return 'Submit Payment';
-});
-
-const isPaymentDisabledReason = computed(() => {
-    if (remainingBalance.value <= 0) {
-        return 'This account has no outstanding balance.';
-    }
-
-    if (effectiveBalance.value <= 0 && hasPendingPayments.value) {
-        return 'Your full outstanding balance is currently awaiting accounting approval.';
-    }
-
-    if (!paymentForm.selected_term_id) {
-        return 'Select a term to proceed.';
-    }
-
-    const pending = getPendingAmountForTerm(paymentForm.selected_term_id);
-    if (pending > 0) {
-        return `₱${formatCurrency(pending)} for this term is awaiting accounting approval. Wait for approval before submitting another payment.`;
-    }
-
-    if (paymentForm.amount <= 0) {
-        return 'Enter a payment amount.';
-    }
-
-    if (paymentForm.amount > effectiveBalance.value) {
-        return 'Amount exceeds your available balance.';
-    }
-
-    return '';
-});
-
-const canSubmitPayment = computed(() => {
-    // Cannot submit if pending payments exist for the selected term
-    const selectedTermHasPending = paymentForm.selected_term_id !== null && getPendingAmountForTerm(paymentForm.selected_term_id) > 0;
-
-    return (
-        effectiveBalance.value > 0 &&
-        paymentForm.amount > 0 &&
-        paymentForm.amount <= effectiveBalance.value &&
-        paymentForm.selected_term_id !== null &&
-        availableTermsForPayment.value.length > 0 &&
-        !selectedTermHasPending
-    );
+const nextPaymentDue = computed(() => {
+    const unpaid = props.paymentTerms
+        ?.filter((t) => t.balance > 0)
+        .sort((a, b) => a.term_order - b.term_order);
+    if (!unpaid?.length) return null;
+    return unpaid[0];
 });
 
 const isOverdue = (dueDate: string): boolean => {
     const due = new Date(dueDate);
     const today = new Date();
-
-    // Normalize to midnight for date-only comparison
     due.setHours(0, 0, 0, 0);
     today.setHours(0, 0, 0, 0);
-
-    // Overdue only if 1 day or more has passed (due date is before today)
     return due < today;
 };
 
-const submitPayment = () => {
-    // Validate term selection
-    if (!paymentForm.selected_term_id) {
-        paymentForm.setError('selected_term_id', 'Please select a payment term');
-        return;
-    }
+// ── Pending approvals ─────────────────────────────────────────────────────────
 
-    // Validate amount
-    if (paymentForm.amount <= 0) {
-        paymentForm.setError('amount', 'Amount must be greater than zero');
-        return;
-    }
+const hasPendingPayments = computed(() =>
+    props.pendingApprovalPayments && props.pendingApprovalPayments.length > 0,
+);
 
-    // Use effectiveBalance (which subtracts pending payments) to prevent overpayment
-    if (paymentForm.amount > effectiveBalance.value) {
-        const pendingTotal = props.pendingApprovalPayments?.reduce((sum, p) => sum + p.amount, 0) || 0;
-        if (pendingTotal > 0) {
-            paymentForm.setError(
-                'amount',
-                `Amount cannot exceed available balance of ₱${formatCurrency(effectiveBalance.value)} (${formatCurrency(pendingTotal)} is awaiting approval)`,
-            );
-        } else {
-            paymentForm.setError('amount', 'Amount cannot exceed remaining balance');
-        }
-        return;
-    }
+// ── Payment history ───────────────────────────────────────────────────────────
 
-    // Debug: log the form data being submitted
-    console.debug('Submitting payment form:', {
-        amount: paymentForm.amount,
-        payment_method: paymentForm.payment_method,
-        paid_at: paymentForm.paid_at,
-        selected_term_id: paymentForm.selected_term_id,
-    });
+const paymentHistory = computed(() =>
+    props.transactions
+        .filter((t) => t.kind === 'payment')
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+);
 
-    paymentForm.post(route('account.pay-now'), {
-        preserveScroll: true,
-        onSuccess: () => {
-            // Reset form after successful payment
-            paymentForm.reset();
-            paymentForm.amount = 0;
-            paymentForm.payment_method = 'gcash';
-            paymentForm.paid_at = new Date().toISOString().split('T')[0];
-            paymentForm.selected_term_id = null;
-
-            // Switch to payment history tab to see the new payment
-            activeTab.value = 'history';
-        },
-        onError: (errors) => {
-            // Log the raw error object for debugging
-            console.error('Payment submission failed. Errors:', errors);
-            if (errors && typeof errors === 'object') {
-                console.error('Error keys:', Object.keys(errors));
-                Object.entries(errors).forEach(([key, value]) => {
-                    console.error(`  ${key}:`, value);
-                });
-            }
-            // Form validation errors are automatically set on paymentForm
-            // and displayed via paymentForm.errors properties
-        },
-    });
-};
-
-// ─── Transaction Detail Dialog ────────────────────────────────────────────────
+// ── Transaction dialog ────────────────────────────────────────────────────────
 
 const selectedTransaction = ref<Transaction | null>(null);
 const showDetailsDialog = ref(false);
@@ -575,14 +273,43 @@ const closeDetailsDialog = () => {
 };
 
 const downloadReceipt = (transactionId: number) => {
-    const url = route('transactions.receipt', { transaction: transactionId });
-    window.open(url, '_blank');
+    window.open(route('transactions.receipt', { transaction: transactionId }), '_blank');
 };
 
-// Overall account balance for the dialog display
-const accountBalance = computed(() => {
-    // Use remaining balance as a positive number (amount owed)
-    return remainingBalance.value;
+const accountBalance = computed(() => remainingBalance.value);
+
+// ── Pay Now navigation ────────────────────────────────────────────────────────
+
+/**
+ * Navigate to the payment page for a specific term.
+ * Passes term_id and assessment_id so Payment/Create.vue can pre-select.
+ */
+const goToPayment = (termId?: number) => {
+    const params: Record<string, any> = {};
+    if (termId) params.term_id = termId;
+    if (props.latestAssessment?.id) params.assessment_id = props.latestAssessment.id;
+    router.get(route('payment.create'), params);
+};
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
+
+onMounted(() => {
+    if (hasAwaitingApprovals.value) {
+        autoRefreshInterval.value = setInterval(() => router.reload(), 10000);
+    }
+});
+
+watch(hasAwaitingApprovals, (newVal) => {
+    if (newVal && !autoRefreshInterval.value) {
+        autoRefreshInterval.value = setInterval(() => router.reload(), 10000);
+    } else if (!newVal && autoRefreshInterval.value) {
+        clearInterval(autoRefreshInterval.value);
+        autoRefreshInterval.value = null;
+    }
+});
+
+onUnmounted(() => {
+    if (autoRefreshInterval.value) clearInterval(autoRefreshInterval.value);
 });
 </script>
 
@@ -594,28 +321,32 @@ const accountBalance = computed(() => {
             <Breadcrumbs :items="breadcrumbs" />
 
             <!-- Active Notifications -->
-            <!-- Banners created by PaymentTermsController when an admin sets a due date.         -->
-            <!-- Each payment_due banner shows a colour-coded due-date chip from the             -->
-            <!-- structured `due_date` DB column — not parsed from message text.                 -->
-            <!-- A Pay Now button scrolls directly to the correct term in the payment tab.       -->
             <div
                 v-for="notification in activeNotifications"
                 :key="notification.id"
                 class="mb-4 flex items-start gap-3 rounded-lg border p-4"
-                :class="notification.type === 'payment_due' ? 'border-amber-300 bg-amber-50' : 'border-blue-200 bg-blue-50'"
+                :class="notification.type === 'payment_due'
+                    ? 'border-amber-300 bg-amber-50'
+                    : 'border-blue-200 bg-blue-50'"
             >
-                <!-- Icon -->
-                <div class="mt-0.5 flex-shrink-0 rounded-full p-1" :class="notification.type === 'payment_due' ? 'bg-amber-100' : 'bg-blue-100'">
-                    <AlertCircle :size="18" :class="notification.type === 'payment_due' ? 'text-amber-600' : 'text-blue-600'" />
+                <div
+                    class="mt-0.5 flex-shrink-0 rounded-full p-1"
+                    :class="notification.type === 'payment_due' ? 'bg-amber-100' : 'bg-blue-100'"
+                >
+                    <AlertCircle
+                        :size="18"
+                        :class="notification.type === 'payment_due' ? 'text-amber-600' : 'text-blue-600'"
+                    />
                 </div>
 
-                <!-- Content -->
                 <div class="min-w-0 flex-1">
-                    <h3 class="mb-0.5 text-sm font-semibold" :class="notification.type === 'payment_due' ? 'text-amber-900' : 'text-blue-900'">
+                    <h3
+                        class="mb-0.5 text-sm font-semibold"
+                        :class="notification.type === 'payment_due' ? 'text-amber-900' : 'text-blue-900'"
+                    >
                         {{ notification.title }}
                     </h3>
 
-                    <!-- Due date chip — colour-coded by urgency, uses structured due_date column -->
                     <div v-if="notification.type === 'payment_due' && notification.due_date" class="mb-2">
                         <span
                             :class="[
@@ -633,26 +364,17 @@ const accountBalance = computed(() => {
                         </span>
                     </div>
 
-                    <p class="text-sm leading-relaxed" :class="notification.type === 'payment_due' ? 'text-amber-800' : 'text-blue-800'">
+                    <p
+                        class="text-sm leading-relaxed"
+                        :class="notification.type === 'payment_due' ? 'text-amber-800' : 'text-blue-800'"
+                    >
                         {{ notification.message }}
                     </p>
-                    <p
-                        v-if="notification.end_date"
-                        class="mt-1 text-xs"
-                        :class="notification.type === 'payment_due' ? 'text-amber-600' : 'text-blue-600'"
-                    >
-                        Visible until: {{ formatDate(notification.end_date) }}
-                    </p>
 
-                    <!-- Pay Now shortcut — scrolls to the correct term in the payment tab -->
+                    <!-- Pay Now shortcut via navigation (no inline form) -->
                     <div v-if="notification.type === 'payment_due' && notification.payment_term_id" class="mt-2">
                         <button
-                            @click="
-                                () => {
-                                    paymentForm.selected_term_id = notification.payment_term_id!;
-                                    activeTab = 'payment';
-                                }
-                            "
+                            @click="goToPayment(notification.payment_term_id!)"
                             class="inline-flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-green-700"
                         >
                             Pay Now
@@ -660,87 +382,91 @@ const accountBalance = computed(() => {
                     </div>
                 </div>
 
-                <!-- Dismiss button -->
                 <button
                     @click="dismissNotification(notification.id)"
                     class="ml-2 flex-shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600"
-                    title="Dismiss notification"
+                    title="Dismiss"
                 >
                     ✕
                 </button>
             </div>
 
-            <!-- Auto-Refresh Status Indicator -->
-            <div v-if="hasAwaitingApprovals" class="mb-4 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3">
-                <div class="flex items-center gap-2">
-                    <div class="h-2 w-2 animate-pulse rounded-full bg-blue-500"></div>
-                    <p class="text-sm text-blue-700">
-                        <strong>Checking for updates...</strong> Your payment is awaiting verification. This page will update automatically.
-                    </p>
-                </div>
+            <!-- Auto-Refresh indicator -->
+            <div
+                v-if="hasAwaitingApprovals"
+                class="mb-4 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3"
+            >
+                <div class="h-2 w-2 animate-pulse rounded-full bg-blue-500"></div>
+                <p class="text-sm text-blue-700">
+                    <strong>Checking for updates…</strong>
+                    Your payment is awaiting verification. This page will refresh automatically.
+                </p>
             </div>
 
             <!-- Header -->
-            <div class="mb-6">
-                <h1 class="ccdi-section-title">My Account Overview</h1>
-                <div class="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                    <div v-if="latestAssessment" class="flex items-center gap-1.5">
-                        <span class="h-1.5 w-1.5 rounded-full bg-blue-400"></span>
-                        <span>{{ latestAssessment.semester }} · {{ latestAssessment.school_year }}</span>
+            <div class="mb-6 flex items-center justify-between">
+                <div>
+                    <h1 class="ccdi-section-title">My Account Overview</h1>
+                    <div class="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                        <div v-if="latestAssessment" class="flex items-center gap-1.5">
+                            <span class="h-1.5 w-1.5 rounded-full bg-blue-400"></span>
+                            <span>{{ latestAssessment.semester }} · {{ latestAssessment.school_year }}</span>
+                        </div>
+                        <div v-if="latestAssessment" class="font-mono text-xs">
+                            {{ latestAssessment.assessment_number }}
+                        </div>
                     </div>
-                    <div v-if="latestAssessment" class="font-mono text-xs">
-                        {{ latestAssessment.assessment_number }}
-                    </div>
-                    <span v-if="latestAssessment" class="ccdi-badge-green text-xs">
-                        {{ latestAssessment.status }}
-                    </span>
-                    <span v-if="user" :class="user.is_irregular ? 'ccdi-badge-yellow' : 'ccdi-badge-blue'">
-                        {{ user.is_irregular ? 'Irregular' : 'Regular' }}
-                    </span>
                 </div>
+
+                <!-- Primary CTA: Make Payment -->
+                <Link
+                    v-if="remainingBalance > 0"
+                    :href="route('payment.create', latestAssessment?.id ? { assessment_id: latestAssessment.id } : {})"
+                    class="inline-flex items-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 text-sm font-semibold text-white shadow transition hover:bg-green-700"
+                >
+                    💳 Make Payment
+                </Link>
             </div>
 
             <!-- Balance Cards -->
             <div class="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
-                <!-- Total Assessment -->
                 <div class="ccdi-stat-card">
-                    <div>
-                        <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total Assessment Fee</p>
-                        <p class="text-2xl font-bold text-blue-600">{{ formatCurrency(totalAssessmentFee) }}</p>
-                        <p v-if="latestAssessment" class="mt-0.5 text-xs text-muted-foreground">
-                            Tuition: {{ formatCurrency(latestAssessment.tuition_fee) }} · Other: {{ formatCurrency(latestAssessment.other_fees) }}
-                        </p>
-                    </div>
+                    <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total Assessment</p>
+                    <p class="text-2xl font-bold text-blue-600">{{ formatCurrency(totalAssessmentFee) }}</p>
+                    <p v-if="latestAssessment" class="mt-0.5 text-xs text-muted-foreground">
+                        {{ latestAssessment.semester }} · {{ latestAssessment.school_year }}
+                    </p>
                 </div>
 
-                <!-- Total Paid -->
                 <div class="ccdi-stat-card">
-                    <div>
-                        <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total Paid</p>
-                        <p class="text-2xl font-bold text-emerald-600">{{ formatCurrency(totalPaid) }}</p>
-                        <p class="mt-0.5 text-xs text-muted-foreground">
-                            <span v-if="latestAssessment">{{ latestAssessment.semester }} {{ latestAssessment.school_year }}</span>
-                            <span v-else>All payments</span>
-                            &mdash; {{ paymentHistory.filter((t) => t.status === 'paid').length }} payment(s)
-                        </p>
-                    </div>
+                    <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total Paid</p>
+                    <p class="text-2xl font-bold text-emerald-600">{{ formatCurrency(totalPaid) }}</p>
+                    <p class="mt-0.5 text-xs text-muted-foreground">
+                        {{ paymentHistory.filter((t) => t.status === 'paid').length }} payment(s)
+                    </p>
                 </div>
 
-                <!-- Current Balance -->
                 <div class="ccdi-stat-card">
-                    <div>
-                        <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Current Balance</p>
-                        <p class="text-2xl font-bold" :class="remainingBalance > 0 ? 'text-red-600' : 'text-emerald-600'">
-                            {{ formatCurrency(remainingBalance) }}
-                        </p>
-                        <p class="mt-0.5 text-xs text-muted-foreground">
-                            {{ remainingBalance > 0 ? 'Amount due' : 'Fully paid' }}
-                        </p>
+                    <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Remaining Balance</p>
+                    <p
+                        class="text-2xl font-bold"
+                        :class="remainingBalance > 0 ? 'text-red-600' : 'text-emerald-600'"
+                    >
+                        {{ formatCurrency(remainingBalance) }}
+                    </p>
+                    <div v-if="remainingBalance > 0" class="mt-1">
+                        <button
+                            @click="goToPayment(firstUnpaidTermId ?? undefined)"
+                            class="text-xs font-medium text-green-700 underline hover:no-underline"
+                        >
+                            Pay now →
+                        </button>
                     </div>
+                    <p v-else class="mt-0.5 text-xs text-emerald-600 font-medium">✓ Fully paid</p>
                 </div>
             </div>
 
-            <!-- Tabs -->
+            <!-- Tabs: Fees & History only (payment removed) -->
             <div class="mb-6 ccdi-card">
                 <div class="border-b border-border">
                     <nav class="flex gap-1 px-4">
@@ -748,7 +474,9 @@ const accountBalance = computed(() => {
                             @click="activeTab = 'fees'"
                             :class="[
                                 'border-b-2 px-4 py-3.5 text-sm font-medium transition-colors',
-                                activeTab === 'fees' ? 'border-blue-600 text-blue-600' : 'border-transparent text-muted-foreground hover:text-foreground',
+                                activeTab === 'fees'
+                                    ? 'border-blue-600 text-blue-600'
+                                    : 'border-transparent text-muted-foreground hover:text-foreground',
                             ]"
                         >
                             Fees &amp; Assessment
@@ -757,30 +485,24 @@ const accountBalance = computed(() => {
                             @click="activeTab = 'history'"
                             :class="[
                                 'border-b-2 px-4 py-3.5 text-sm font-medium transition-colors',
-                                activeTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-muted-foreground hover:text-foreground',
+                                activeTab === 'history'
+                                    ? 'border-blue-600 text-blue-600'
+                                    : 'border-transparent text-muted-foreground hover:text-foreground',
                             ]"
                         >
                             Payment History
                         </button>
-                        <button
-                            @click="activeTab = 'payment'"
-                            :class="[
-                                'border-b-2 px-4 py-3.5 text-sm font-medium transition-colors',
-                                activeTab === 'payment' ? 'border-blue-600 text-blue-600' : 'border-transparent text-muted-foreground hover:text-foreground',
-                            ]"
-                        >
-                            Make Payment
-                        </button>
                     </nav>
                 </div>
 
-                <!-- Tab Content -->
                 <div class="p-6">
-                    <!-- Fees Tab -->
-                    <div v-if="activeTab === 'fees'">
-                        <h2 class="mb-4 text-xs font-semibold uppercase tracking-widest text-muted-foreground">Current Assessment</h2>
 
-                        <!-- Assessment Info Banner -->
+                    <!-- ── FEES TAB ──────────────────────────────────────── -->
+                    <div v-if="activeTab === 'fees'">
+                        <h2 class="mb-4 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                            Current Assessment
+                        </h2>
+
                         <div v-if="latestAssessment" class="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4">
                             <div class="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
                                 <div>
@@ -798,7 +520,6 @@ const accountBalance = computed(() => {
                                 <div>
                                     <span class="text-gray-600">Status:</span>
                                     <span
-                                        v-if="latestAssessment"
                                         :class="[
                                             'ml-2 inline-block rounded-full px-2 py-1 text-xs font-semibold',
                                             getAssessmentStatusConfig(latestAssessment.status).bgClass,
@@ -812,21 +533,20 @@ const accountBalance = computed(() => {
                         </div>
 
                         <!-- Payment Terms Table -->
-                        <div v-if="paymentTerms && paymentTerms.length" class="mt-8 border-t pt-6">
+                        <div v-if="paymentTerms && paymentTerms.length" class="mt-6 border-t pt-6">
                             <h3 class="mb-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                                <Clock :size="15" />
-                                Payment Terms
+                                <Clock :size="15" /> Payment Terms
                             </h3>
                             <div class="overflow-x-auto rounded-2xl border border-border">
                                 <table class="w-full border-collapse">
                                     <thead>
                                         <tr class="border-b border-border bg-muted/40">
-                                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Payment Term</th>
-                                            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Original Amount</th>
-                                            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Current Balance</th>
+                                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Term</th>
+                                            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Amount</th>
+                                            <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Balance</th>
                                             <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Due Date</th>
                                             <th class="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
-                                            <th class="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">Actions</th>
+                                            <th class="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">Action</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -835,7 +555,7 @@ const accountBalance = computed(() => {
                                             :key="term.id"
                                             class="border-b border-border transition-colors hover:bg-muted/30"
                                         >
-                                            <td class="px-4 py-3 text-gray-900">{{ term.term_name || 'N/A' }}</td>
+                                            <td class="px-4 py-3 text-gray-900">{{ term.term_name }}</td>
                                             <td class="px-4 py-3 text-right text-gray-700">{{ formatCurrency(term.amount) }}</td>
                                             <td
                                                 class="px-4 py-3 text-right font-medium"
@@ -844,7 +564,9 @@ const accountBalance = computed(() => {
                                                 {{ formatCurrency(term.balance) }}
                                             </td>
                                             <td class="px-4 py-3 text-right">
-                                                <p class="text-sm text-gray-700">{{ term.due_date ? formatDate(term.due_date) : '-' }}</p>
+                                                <p class="text-sm text-gray-700">
+                                                    {{ term.due_date ? formatDate(term.due_date) : '—' }}
+                                                </p>
                                                 <p
                                                     v-if="term.due_date && isOverdue(term.due_date) && term.status !== 'paid'"
                                                     class="mt-1 text-xs text-red-600"
@@ -864,89 +586,26 @@ const accountBalance = computed(() => {
                                                 </span>
                                             </td>
                                             <td class="px-4 py-3 text-center">
-                                                <div class="flex justify-center gap-2">
-                                                    <!--
-                                                        View button: finds the most recent payment transaction
-                                                        for this term and opens the Transaction Detail Dialog.
-                                                        If no payment exists for the term yet, shows a tooltip.
-                                                    -->
-                                                    <button
-                                                        @click="
-                                                            () => {
-                                                                const termTx = transactions
-                                                                    .filter(
-                                                                        (t) =>
-                                                                            t.kind === 'payment' &&
-                                                                            ((t.meta && t.meta.selected_term_id === term.id) ||
-                                                                                (t.meta && t.meta.term_name === term.term_name)),
-                                                                    )
-                                                                    .sort(
-                                                                        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-                                                                    )[0];
-                                                                if (termTx) viewTransaction(termTx);
-                                                            }
-                                                        "
-                                                        :disabled="
-                                                            !transactions.some(
-                                                                (t) =>
-                                                                    t.kind === 'payment' &&
-                                                                    t.meta &&
-                                                                    (t.meta.selected_term_id === term.id || t.meta.term_name === term.term_name),
-                                                            )
-                                                        "
-                                                        :class="[
-                                                            'rounded px-2 py-1 text-xs transition-colors',
-                                                            transactions.some(
-                                                                (t) =>
-                                                                    t.kind === 'payment' &&
-                                                                    t.meta &&
-                                                                    (t.meta.selected_term_id === term.id || t.meta.term_name === term.term_name),
-                                                            )
-                                                                ? 'bg-blue-600 text-white hover:bg-blue-700'
-                                                                : 'cursor-not-allowed bg-gray-200 text-gray-400',
-                                                        ]"
-                                                        :title="
-                                                            transactions.some(
-                                                                (t) =>
-                                                                    t.kind === 'payment' &&
-                                                                    t.meta &&
-                                                                    (t.meta.selected_term_id === term.id || t.meta.term_name === term.term_name),
-                                                            )
-                                                                ? 'View payment details'
-                                                                : 'No payment recorded for this term yet'
-                                                        "
-                                                    >
-                                                        View
-                                                    </button>
-                                                    <button
-                                                        v-if="term.balance > 0 && term.id === firstUnpaidTermId"
-                                                        @click="
-                                                            () => {
-                                                                paymentForm.selected_term_id = term.id;
-                                                                activeTab = 'payment';
-                                                            }
-                                                        "
-                                                        class="rounded bg-indigo-600 px-2 py-1 text-xs text-white transition-colors hover:bg-indigo-700"
-                                                        title="Make payment for this term"
-                                                    >
-                                                        Pay Now
-                                                    </button>
-                                                    <button
-                                                        v-else-if="term.balance > 0"
-                                                        class="cursor-not-allowed rounded bg-gray-200 px-2 py-1 text-xs text-gray-500"
-                                                        disabled
-                                                        title="Pay earlier terms first"
-                                                    >
-                                                        Locked
-                                                    </button>
-                                                    <button
-                                                        v-else
-                                                        class="cursor-not-allowed rounded bg-gray-100 px-2 py-1 text-xs text-gray-400"
-                                                        disabled
-                                                    >
-                                                        Paid
-                                                    </button>
-                                                </div>
+                                                <button
+                                                    v-if="term.balance > 0 && term.id === firstUnpaidTermId"
+                                                    @click="goToPayment(term.id)"
+                                                    class="rounded bg-indigo-600 px-2 py-1 text-xs text-white transition-colors hover:bg-indigo-700"
+                                                >
+                                                    Pay Now
+                                                </button>
+                                                <span
+                                                    v-else-if="term.balance > 0"
+                                                    class="cursor-not-allowed rounded bg-gray-200 px-2 py-1 text-xs text-gray-500"
+                                                    title="Pay earlier terms first"
+                                                >
+                                                    Locked
+                                                </span>
+                                                <span
+                                                    v-else
+                                                    class="rounded bg-green-100 px-2 py-1 text-xs text-green-700"
+                                                >
+                                                    Paid ✓
+                                                </span>
                                             </td>
                                         </tr>
                                     </tbody>
@@ -954,19 +613,18 @@ const accountBalance = computed(() => {
                             </div>
                         </div>
 
-                        <!-- ── Fee Breakdown ──────────────────────────────── -->
+                        <!-- Fee Breakdown -->
                         <div class="mt-8 border-t pt-6">
-                            <h3 class="mb-4 text-sm font-semibold uppercase tracking-widest text-muted-foreground">Fee Breakdown</h3>
-
+                            <h3 class="mb-4 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+                                Fee Breakdown
+                            </h3>
                             <div v-if="!latestAssessment" class="rounded-lg border border-dashed border-gray-200 py-8 text-center">
                                 <p class="text-sm text-gray-400">No assessment available.</p>
                             </div>
-
                             <template v-else>
-                                <!-- Compute values from fee_breakdown -->
                                 <div class="overflow-hidden rounded-lg border border-gray-200">
                                     <table class="w-full text-sm">
-                                        <thead class="bg-gray-50 border-b border-gray-200">
+                                        <thead class="border-b border-gray-200 bg-gray-50">
                                             <tr>
                                                 <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Fee Item</th>
                                                 <th class="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-gray-500">Units</th>
@@ -974,60 +632,21 @@ const accountBalance = computed(() => {
                                             </tr>
                                         </thead>
                                         <tbody class="divide-y divide-gray-100">
-
-                                            <!-- Tuition Fee row — sum of all Tuition category items -->
-                                            <tr class="hover:bg-gray-50">
-                                                <td class="px-4 py-3 text-gray-700">
-                                                    Tuition Fee
-                                                    <p class="text-xs text-gray-400">
-                                                        {{ allAssessments.find(a => a.id === latestAssessment!.id)?.fee_breakdown?.filter(i => i.category === 'Tuition').reduce((s, i) => s + (i.units ?? 0), 0) ?? 0 }} LEC units × ₱{{ (364).toLocaleString() }}
-                                                    </p>
-                                                </td>
-                                                <td class="px-4 py-3 text-center text-gray-700">
-                                                    {{ allAssessments.find(a => a.id === latestAssessment!.id)?.fee_breakdown?.filter(i => i.category === 'Tuition').reduce((s, i) => s + (i.units ?? 0), 0) ?? 0 }}
-                                                </td>
+                                            <tr
+                                                v-for="item in allAssessments.find(a => a.id === latestAssessment!.id)?.fee_breakdown ?? []"
+                                                :key="item.name"
+                                                class="hover:bg-gray-50"
+                                            >
+                                                <td class="px-4 py-3 text-gray-700">{{ item.name }}</td>
+                                                <td class="px-4 py-3 text-center text-gray-500">{{ item.units ?? '—' }}</td>
                                                 <td class="px-4 py-3 text-right font-medium text-gray-900">
-                                                    {{ formatCurrency(allAssessments.find(a => a.id === latestAssessment!.id)?.fee_breakdown?.filter(i => i.category === 'Tuition').reduce((s, i) => s + i.amount, 0) ?? latestAssessment.tuition_fee) }}
+                                                    {{ formatCurrency(item.amount) }}
                                                 </td>
                                             </tr>
-
-                                            <!-- Lab Fee row -->
-                                            <tr class="hover:bg-gray-50">
-                                                <td class="px-4 py-3 text-gray-700">
-                                                    Laboratory Fee
-                                                    <p class="text-xs text-gray-400">
-                                                        {{ allAssessments.find(a => a.id === latestAssessment!.id)?.fee_breakdown?.filter(i => i.category === 'Laboratory').length ?? 0 }} lab subject(s) × ₱{{ (1656).toLocaleString() }}
-                                                    </p>
-                                                </td>
-                                                <td class="px-4 py-3 text-center text-gray-700">
-                                                    {{ allAssessments.find(a => a.id === latestAssessment!.id)?.fee_breakdown?.filter(i => i.category === 'Laboratory').reduce((s, i) => s + (i.units ?? 0), 0) ?? 0 }}
-                                                </td>
-                                                <td class="px-4 py-3 text-right font-medium text-gray-900">
-                                                    {{ formatCurrency(allAssessments.find(a => a.id === latestAssessment!.id)?.fee_breakdown?.filter(i => i.category === 'Laboratory').reduce((s, i) => s + i.amount, 0) ?? 0) }}
-                                                </td>
-                                            </tr>
-
-                                            <!-- Misc Fee row -->
-                                            <tr class="hover:bg-gray-50">
-                                                <td class="px-4 py-3 text-gray-700">
-                                                    Miscellaneous Fee
-                                                    <p class="text-xs text-gray-400">Entrep, Registration, LMS, Library, Athletic, etc.</p>
-                                                </td>
-                                                <td class="px-4 py-3 text-center text-gray-400">—</td>
-                                                <td class="px-4 py-3 text-right font-medium text-gray-900">
-                                                    {{ formatCurrency(latestAssessment.other_fees) }}
-                                                </td>
-                                            </tr>
-
                                         </tbody>
                                         <tfoot class="border-t-2 border-gray-300 bg-gray-50">
                                             <tr>
-                                                <td class="px-4 py-3 font-bold text-gray-900">Total Assessment Fee</td>
-                                                <td class="px-4 py-3 text-center text-xs font-semibold text-gray-600">
-                                                    <!-- Total units -->
-                                                    {{ (allAssessments.find(a => a.id === latestAssessment!.id)?.fee_breakdown?.filter(i => i.category === 'Tuition').reduce((s, i) => s + (i.units ?? 0), 0) ?? 0) +
-                                                    (allAssessments.find(a => a.id === latestAssessment!.id)?.fee_breakdown?.filter(i => i.category === 'Laboratory').reduce((s, i) => s + (i.units ?? 0), 0) ?? 0) }} units total
-                                                </td>
+                                                <td class="px-4 py-3 font-bold text-gray-900" colspan="2">Total Assessment Fee</td>
                                                 <td class="px-4 py-3 text-right text-base font-bold text-gray-900">
                                                     {{ formatCurrency(latestAssessment.total_assessment) }}
                                                 </td>
@@ -1035,26 +654,16 @@ const accountBalance = computed(() => {
                                         </tfoot>
                                     </table>
                                 </div>
-
-                                <!-- Terms of Payment badges -->
-                                <div class="mt-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-                                    <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-gray-500">Terms of Payment</p>
-                                    <div class="flex flex-wrap gap-2">
-                                        <span v-for="term in paymentTerms" :key="term.id"
-                                            class="rounded-full px-3 py-1 text-xs font-medium"
-                                            :class="term.balance <= 0 ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'">
-                                            {{ term.term_name }}{{ term.balance <= 0 ? ' ✓' : '' }}
-                                        </span>
-                                    </div>
-                                </div>
                             </template>
                         </div>
 
-                        <!-- Pending Payments Section -->
-                        <div v-if="hasPendingPayments" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
+                        <!-- Pending Approvals Banner -->
+                        <div v-if="hasPendingPayments" class="mt-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
                             <div class="mb-3 flex items-center gap-2">
                                 <Clock :size="18" class="text-amber-600" />
-                                <h3 class="font-semibold text-amber-900">Pending Approval ({{ pendingApprovalPayments.length }})</h3>
+                                <h3 class="font-semibold text-amber-900">
+                                    Pending Approval ({{ pendingApprovalPayments.length }})
+                                </h3>
                             </div>
                             <div class="space-y-2">
                                 <div
@@ -1064,17 +673,34 @@ const accountBalance = computed(() => {
                                 >
                                     <div>
                                         <p class="text-sm font-medium text-gray-900">{{ payment.term_name }}</p>
-                                        <p class="text-xs text-gray-600">{{ payment.reference }} • {{ formatDate(payment.created_at) }}</p>
+                                        <p class="text-xs text-gray-600">
+                                            {{ payment.reference }} · {{ formatDate(payment.created_at) }}
+                                        </p>
                                     </div>
                                     <div class="text-right">
-                                        <p class="text-sm font-semibold text-amber-700">₱{{ formatCurrency(payment.amount) }}</p>
+                                        <p class="text-sm font-semibold text-amber-700">
+                                            {{ formatCurrency(payment.amount) }}
+                                        </p>
                                         <p class="text-xs text-amber-600">⏳ Awaiting Approval</p>
                                     </div>
                                 </div>
                             </div>
                         </div>
+                    </div>
 
-                        <div v-if="paymentHistory.length" class="space-y-3">
+                    <!-- ── HISTORY TAB ───────────────────────────────────── -->
+                    <div v-if="activeTab === 'history'">
+                        <h2 class="mb-4 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                            Payment History
+                        </h2>
+
+                        <div v-if="!paymentHistory.length" class="py-12 text-center">
+                            <XCircle :size="48" class="mx-auto mb-3 text-gray-400" />
+                            <p class="text-gray-500">No payment history yet</p>
+                            <p class="mt-1 text-sm text-gray-400">Your payments will appear here</p>
+                        </div>
+
+                        <div v-else class="space-y-3">
                             <div
                                 v-for="payment in paymentHistory"
                                 :key="payment.id"
@@ -1085,15 +711,19 @@ const accountBalance = computed(() => {
                                         <CheckCircle :size="20" class="text-green-600" />
                                     </div>
                                     <div>
-                                        <p class="font-medium text-gray-900">{{ payment.meta?.description || payment.type || 'Payment' }}</p>
+                                        <p class="font-medium text-gray-900">
+                                            {{ payment.meta?.description || payment.meta?.term_name || payment.type || 'Payment' }}
+                                        </p>
                                         <p class="text-sm text-gray-600">
-                                            {{ payment.created_at ? formatDate(payment.created_at) : '-' }}
+                                            {{ payment.created_at ? formatDate(payment.created_at) : '—' }}
                                         </p>
                                         <p class="text-xs text-gray-500">{{ payment.reference || 'N/A' }}</p>
                                     </div>
                                 </div>
                                 <div class="text-right">
-                                    <p class="text-lg font-semibold text-green-600">{{ formatCurrency(payment.amount) }}</p>
+                                    <p class="text-lg font-semibold text-green-600">
+                                        {{ formatCurrency(payment.amount) }}
+                                    </p>
                                     <span
                                         :class="[
                                             'inline-block rounded px-2 py-1 text-xs font-medium',
@@ -1103,190 +733,24 @@ const accountBalance = computed(() => {
                                     >
                                         {{ getTransactionStatusConfig(payment.status).label }}
                                     </span>
-                                    <button
-                                        @click="viewTransaction(payment)"
-                                        class="mt-1 rounded bg-blue-600 px-2 py-0.5 text-xs text-white transition-colors hover:bg-blue-700"
-                                    >
-                                        View
-                                    </button>
+                                    <div class="mt-1">
+                                        <button
+                                            @click="viewTransaction(payment)"
+                                            class="rounded bg-blue-600 px-2 py-0.5 text-xs text-white transition-colors hover:bg-blue-700"
+                                        >
+                                            View
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-
-                        <div v-else-if="!hasPendingPayments" class="py-12 text-center">
-                            <XCircle :size="48" class="mx-auto mb-3 text-gray-400" />
-                            <p class="text-gray-500">No payment history for this term yet</p>
-                            <p v-if="latestAssessment" class="mt-1 text-sm text-gray-400">
-                                Payments for {{ latestAssessment.semester }} {{ latestAssessment.school_year }} will appear here
-                            </p>
-                            <p v-else class="mt-1 text-sm text-gray-400">Your payments will appear here after you make them</p>
                         </div>
                     </div>
 
-                    <!-- Payment Form Tab -->
-                    <div v-if="activeTab === 'payment'">
-                        <h2 class="mb-6 text-2xl font-bold">Add New Payment</h2>
-
-                        <!-- Pending Payment Warning Banner -->
-                        <div v-if="hasPendingPayments" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
-                            <div class="flex items-start gap-3">
-                                <AlertCircle :size="20" class="mt-0.5 flex-shrink-0 text-amber-600" />
-                                <div class="flex-1">
-                                    <p class="mb-2 font-semibold text-amber-900">⏳ Pending Payment(s) Awaiting Approval</p>
-                                    <div class="space-y-1 text-sm text-amber-800">
-                                        <div v-for="payment in pendingApprovalPayments" :key="payment.id" class="flex justify-between">
-                                            <span>{{ payment.term_name }} ({{ payment.reference }})</span>
-                                            <span class="font-semibold">₱{{ formatCurrency(payment.amount) }}</span>
-                                        </div>
-                                    </div>
-                                    <p class="mt-2 text-xs text-amber-700 italic">
-                                        Please wait for accounting to verify and approve your pending payment(s) before submitting another payment for
-                                        the same term.
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- No Balance Message -->
-                        <div v-if="remainingBalance <= 0" class="mb-6 rounded-lg border border-green-200 bg-green-50 p-4">
-                            <div class="flex items-center gap-2">
-                                <CheckCircle :size="20" class="text-green-600" />
-                                <p class="font-medium text-green-800">You have no outstanding balance!</p>
-                            </div>
-                            <p class="mt-1 text-sm text-green-700">All fees have been paid in full.</p>
-                        </div>
-
-                        <form @submit.prevent="submitPayment">
-                            <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                                <!-- Amount -->
-                                <div>
-                                    <label for="payment-amount" class="mb-1 block text-sm font-medium text-gray-700">Amount</label>
-                                    <input
-                                        id="payment-amount"
-                                        v-model="paymentForm.amount"
-                                        type="number"
-                                        name="amount"
-                                        step="0.01"
-                                        min="0"
-                                        :max="effectiveBalance"
-                                        placeholder="0.00"
-                                        required
-                                        :disabled="effectiveBalance <= 0"
-                                        class="w-full rounded-lg border px-4 py-2 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100"
-                                    />
-                                    <p class="mt-1 text-xs text-gray-500">
-                                        Maximum: {{ formatCurrency(effectiveBalance) }}
-                                        <span v-if="hasPendingPayments" class="ml-1 text-amber-600"
-                                            >({{ formatCurrency(remainingBalance - effectiveBalance) }} awaiting approval)</span
-                                        >
-                                    </p>
-                                    <div v-if="paymentForm.errors.amount" class="mt-1 text-sm text-red-500">
-                                        {{ paymentForm.errors.amount }}
-                                    </div>
-                                </div>
-
-                                <!-- Payment Method -->
-                                <div>
-                                    <label for="payment-method" class="mb-1 block text-sm font-medium text-gray-700">Payment Method</label>
-                                    <select
-                                        id="payment-method"
-                                        v-model="paymentForm.payment_method"
-                                        name="payment_method"
-                                        :disabled="effectiveBalance <= 0"
-                                        class="w-full rounded-lg border px-4 py-2 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100"
-                                    >
-                                        <option value="gcash">GCash</option>
-                                        <option value="bank_transfer">Bank Transfer</option>
-                                        <option value="credit_card">Credit Card</option>
-                                        <option value="debit_card">Debit Card</option>
-                                    </select>
-                                    <div v-if="paymentForm.errors.payment_method" class="mt-1 text-sm text-red-500">
-                                        {{ paymentForm.errors.payment_method }}
-                                    </div>
-                                </div>
-
-                                <!-- Select Term (Required) -->
-                                <div>
-                                    <label for="payment-term" class="mb-1 block text-sm font-medium text-gray-700">
-                                        Select Term
-                                        <span class="text-xs text-red-500">*</span>
-                                    </label>
-                                    <select
-                                        id="payment-term"
-                                        v-model.number="paymentForm.selected_term_id"
-                                        name="selected_term_id"
-                                        required
-                                        :disabled="effectiveBalance <= 0 || availableTermsForPayment.length === 0"
-                                        class="w-full rounded-lg border px-4 py-2 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100"
-                                    >
-                                        <option :value="null">-- Choose a payment term --</option>
-                                        <option
-                                            v-for="term in availableTermsForPayment"
-                                            :key="term.id"
-                                            :value="term.id"
-                                            :disabled="!term.isSelectable"
-                                        >
-                                            {{ term.label
-                                            }}{{
-                                                term.hasPending
-                                                    ? ` (⏳ Pending ₱${formatCurrency(term.pendingAmount)} approval)`
-                                                    : ` - ₱${formatCurrency(term.balance)}`
-                                            }}{{ !term.isSelectable && !term.hasPending ? ' (Not yet available)' : '' }}
-                                        </option>
-                                    </select>
-                                    <p class="mt-1 text-xs text-gray-500">
-                                        Only the first unpaid term can be selected. Overpayments will carry over to the next term.
-                                    </p>
-                                    <div v-if="paymentForm.errors.selected_term_id" class="mt-1 text-sm text-red-500">
-                                        {{ paymentForm.errors.selected_term_id }}
-                                    </div>
-                                </div>
-
-                                <!-- Payment Date -->
-                                <div>
-                                    <label for="payment-date" class="mb-1 block text-sm font-medium text-gray-700">Payment Date</label>
-                                    <input
-                                        id="payment-date"
-                                        v-model="paymentForm.paid_at"
-                                        type="date"
-                                        name="paid_at"
-                                        required
-                                        :disabled="effectiveBalance <= 0"
-                                        class="w-full rounded-lg border px-4 py-2 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100"
-                                    />
-                                    <div v-if="paymentForm.errors.paid_at" class="mt-1 text-sm text-red-500">
-                                        {{ paymentForm.errors.paid_at }}
-                                    </div>
-                                </div>
-
-                                <!-- Submit Button -->
-                                <div class="md:col-span-2">
-                                    <button
-                                        type="submit"
-                                        class="w-full rounded-lg bg-indigo-600 px-5 py-3 font-medium text-white shadow transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-400 disabled:opacity-50"
-                                        :disabled="!canSubmitPayment || paymentForm.processing"
-                                        :title="isPaymentDisabledReason"
-                                    >
-                                        <span v-if="paymentForm.processing">Processing...</span>
-                                        <span v-else-if="remainingBalance <= 0">No Balance to Pay</span>
-                                        <span v-else-if="effectiveBalance <= 0 && hasPendingPayments">Payment Awaiting Approval</span>
-                                        <span v-else-if="paymentForm.selected_term_id && getPendingAmountForTerm(paymentForm.selected_term_id) > 0">
-                                            ⏳ Awaiting Approval for {{ selectedTermInfo?.term_name }}
-                                        </span>
-                                        <span v-else>{{ submitButtonMessage }}</span>
-                                    </button>
-                                    <p v-if="isPaymentDisabledReason" class="mt-2 text-xs text-amber-700">
-                                        {{ isPaymentDisabledReason }}
-                                    </p>
-                                </div>
-                            </div>
-                        </form>
-                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- ── Transaction Detail Dialog ── -->
+        <!-- Transaction Detail Dialog -->
         <Dialog v-model:open="showDetailsDialog">
             <DialogContent class="max-h-[80vh] max-w-2xl overflow-y-auto">
                 <DialogHeader>
@@ -1295,7 +759,6 @@ const accountBalance = computed(() => {
                 </DialogHeader>
 
                 <div v-if="selectedTransaction" class="space-y-5">
-                    <!-- Basic Info -->
                     <div>
                         <h3 class="mb-3 border-b pb-2 text-base font-semibold">Basic Information</h3>
                         <div class="grid grid-cols-2 gap-3">
@@ -1306,15 +769,6 @@ const accountBalance = computed(() => {
                             <div>
                                 <p class="text-xs text-gray-500">Date</p>
                                 <p class="text-sm font-medium">{{ formatDate(selectedTransaction.created_at) }}</p>
-                            </div>
-                            <div>
-                                <p class="text-xs text-gray-500">Kind</p>
-                                <span
-                                    class="inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
-                                    :class="selectedTransaction.kind === 'charge' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'"
-                                >
-                                    {{ selectedTransaction.kind }}
-                                </span>
                             </div>
                             <div>
                                 <p class="text-xs text-gray-500">Status</p>
@@ -1329,71 +783,52 @@ const accountBalance = computed(() => {
                                 </span>
                             </div>
                             <div>
-                                <p class="text-xs text-gray-500">Category</p>
-                                <p class="text-sm font-medium">
-                                    {{ selectedTransaction.meta?.term_name ?? selectedTransaction.type }}
-                                </p>
-                            </div>
-                            <div class="col-span-2">
                                 <p class="text-xs text-gray-500">Amount</p>
-                                <p class="text-2xl font-bold" :class="selectedTransaction.kind === 'charge' ? 'text-red-600' : 'text-green-600'">
-                                    {{ selectedTransaction.kind === 'charge' ? '+' : '−' }}{{ formatCurrency(selectedTransaction.amount) }}
+                                <p class="text-xl font-bold text-green-600">
+                                    {{ formatCurrency(selectedTransaction.amount) }}
                                 </p>
                             </div>
                             <div class="col-span-2">
-                                <p class="text-xs text-gray-500">Overall Remaining Balance</p>
-                                <p class="text-lg font-bold" :class="accountBalance > 0 ? 'text-red-600' : 'text-green-600'">
+                                <p class="text-xs text-gray-500">Outstanding Balance</p>
+                                <p
+                                    class="text-lg font-bold"
+                                    :class="accountBalance > 0 ? 'text-red-600' : 'text-green-600'"
+                                >
                                     {{ formatCurrency(accountBalance) }}
                                 </p>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Payment Info -->
-                    <div v-if="selectedTransaction.kind === 'payment'">
+                    <div v-if="selectedTransaction.meta?.term_name">
                         <h3 class="mb-3 border-b pb-2 text-base font-semibold">Payment Information</h3>
                         <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <p class="text-xs text-gray-500">Payment Method</p>
-                                <p class="text-sm font-medium capitalize">
-                                    {{ (selectedTransaction as any).payment_channel?.replace(/_/g, ' ') || 'N/A' }}
-                                </p>
-                            </div>
-                            <div>
-                                <p class="text-xs text-gray-500">Payment Date</p>
-                                <p class="text-sm font-medium">
-                                    {{ (selectedTransaction as any).paid_at ? formatDate((selectedTransaction as any).paid_at) : 'N/A' }}
-                                </p>
-                            </div>
-                            <div v-if="selectedTransaction.meta?.term_name" class="col-span-2">
+                            <div class="col-span-2">
                                 <p class="text-xs text-gray-500">Payment For</p>
-                                <p class="text-sm font-semibold text-green-700">{{ selectedTransaction.meta.term_name }}</p>
+                                <p class="text-sm font-semibold text-green-700">
+                                    {{ selectedTransaction.meta.term_name }}
+                                </p>
                             </div>
                             <div v-if="selectedTransaction.meta?.description" class="col-span-2">
                                 <p class="text-xs text-gray-500">Description</p>
-                                <p class="text-sm font-medium">{{ selectedTransaction.meta.description }}</p>
+                                <p class="text-sm">{{ selectedTransaction.meta.description }}</p>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Actions -->
                     <div class="flex items-center justify-end gap-3 border-t pt-4">
                         <Button variant="outline" @click="closeDetailsDialog">Close</Button>
-                        <!--
-                            Receipt download: only available for confirmed paid transactions.
-                            Awaiting-verification payments cannot be downloaded yet.
-                        -->
                         <Button
                             v-if="selectedTransaction.kind === 'payment' && selectedTransaction.status === 'paid'"
                             @click="downloadReceipt(selectedTransaction.id)"
                         >
-                            📄 Payment Receipt
+                            📄 Receipt
                         </Button>
                         <span
-                            v-if="selectedTransaction.kind === 'payment' && selectedTransaction.status === 'awaiting_approval'"
-                            class="flex items-center rounded-lg bg-amber-100 px-4 py-2 text-sm font-medium text-amber-700"
+                            v-if="selectedTransaction.status === 'awaiting_approval'"
+                            class="rounded-lg bg-amber-100 px-4 py-2 text-sm font-medium text-amber-700"
                         >
-                            ⏳ Awaiting Verification — Receipt Not Yet Available
+                            ⏳ Awaiting Verification
                         </span>
                     </div>
                 </div>

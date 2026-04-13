@@ -273,10 +273,10 @@ class RealisticStudentDataSeeder extends Seeder
                     'student_assessment_id' => $assessment->id,
                     'amount' => $amount,
                     'payment_method' => $transaction->payment_channel,
-                    'reference_number' => $reference,
                     'description' => "Payment — {$term->term_name}",
                     'status' => 'completed',
-                    'paid_at' => $paidDate,
+                    'created_at' => $paidDate,
+                    'updated_at' => $paidDate,
                 ]);
             }
 
@@ -336,10 +336,10 @@ class RealisticStudentDataSeeder extends Seeder
                     'student_assessment_id' => $assessment->id,
                     'amount' => (float) $term->amount,
                     'payment_method' => $transaction->payment_channel,
-                    'reference_number' => $reference,
                     'description' => "Payment — {$term->term_name}",
                     'status' => 'completed',
-                    'paid_at' => $paymentDates[$dateIdx],
+                    'created_at' => $paymentDates[$dateIdx],
+                    'updated_at' => $paymentDates[$dateIdx],
                 ]);
             }
 
@@ -401,10 +401,10 @@ class RealisticStudentDataSeeder extends Seeder
                 'student_assessment_id' => $assessment->id,
                 'amount' => (float) $firstTerm->amount,
                 'payment_method' => $transaction->payment_channel,
-                'reference_number' => $reference,
                 'description' => "Payment — {$firstTerm->term_name}",
                 'status' => 'completed',
-                'paid_at' => $paidDate,
+                'created_at' => $paidDate,
+                'updated_at' => $paidDate,
             ]);
         }
 

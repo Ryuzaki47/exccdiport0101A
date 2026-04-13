@@ -384,6 +384,32 @@ class TransactionController extends Controller
                 : (string) now()->year;
             $transactionSem  = $assessment?->semester ?? $this->getCurrentSemesterLabel();
 
+            // For students: create pending transaction and redirect to proof upload
+            if ($isStudent) {
+                $transaction = Transaction::create([
+                    'user_id'          => $user->id,
+                    'kind'             => 'payment',
+                    'type'             => 'payment_submission',
+                    'amount'           => $paidAmount,
+                    'status'           => PaymentStatus::PENDING->value,
+                    'payment_channel'  => $data['payment_method'],
+                    'paid_at'          => $data['paid_at'],
+                    'year'             => $transactionYear,
+                    'semester'         => $transactionSem,
+                    'meta'             => [
+                        'payment_method'   => $data['payment_method'],
+                        'description'      => $data['description'] ?? null,
+                        'selected_term_id' => (int) $data['selected_term_id'],
+                        'term_name'        => $term->term_name,
+                        'requires_proof'   => true,
+                    ],
+                ]);
+
+                return redirect()->route('payment.proof.show', $transaction->id)
+                    ->with('success', 'Payment submitted. Please upload proof of payment.');
+            }
+
+            // For staff: process payment immediately without proof
             $result = $paymentService->processPayment($user, $paidAmount, [
                 'payment_method'   => $data['payment_method'],
                 'paid_at'          => $data['paid_at'],
@@ -392,36 +418,19 @@ class TransactionController extends Controller
                 'term_name'        => $term->term_name,
                 'year'             => $transactionYear,
                 'semester'         => $transactionSem,
-            ], $requiresApproval);
-
-            // Start approval workflow for student payments
-            if ($requiresApproval) {
-                $this->startPaymentApprovalWorkflow($result['transaction_id'], $user->id);
-            }
+            ], false);
 
             // Post-processing for immediately-approved payments (staff side)
-            if (!$requiresApproval) {
-                event(new PaymentRecorded(
-                    $user,
-                    $result['transaction_id'] ?? null,
-                    (float) $data['amount'],
-                    $result['transaction_reference'] ?? 'N/A'
-                ));
-                // Year-level promotion is handled automatically by AccountService::recalculate()
-                // which is called inside StudentPaymentService::processPayment().
-            }
+            event(new PaymentRecorded(
+                $user,
+                $result['transaction_id'] ?? null,
+                (float) $data['amount'],
+                $result['transaction_reference'] ?? 'N/A'
+            ));
+            // Year-level promotion is handled automatically by AccountService::recalculate()
+            // which is called inside StudentPaymentService::processPayment().
 
-            $message = $requiresApproval
-                ? 'Payment submitted successfully. Please wait for accounting approval.'
-                : 'Payment recorded successfully!';
-
-            return back()->with([
-                'success' => $message,
-                'flash'   => [
-                    'transaction_id'    => $result['transaction_id'] ?? null,
-                    'requires_approval' => $requiresApproval,
-                ],
-            ]);
+            return back()->with('success', 'Payment recorded successfully!');
 
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error('payNow failed', [

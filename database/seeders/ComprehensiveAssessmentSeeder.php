@@ -213,12 +213,15 @@ class ComprehensiveAssessmentSeeder extends Seeder
         $yearLevel    = $student->year_level;
         $grandTotal   = round($tuitionTotal, 2);
 
-        $feeBreakdown = [[
-            'category'    => 'Tuition',
-            'name'        => 'Tuition Fee',
-            'amount'      => $grandTotal,
-            'description' => "Tuition Fee — {$yearLevel} {$semester} {$this->schoolYear}",
-        ]];
+        // Calculate units based on year level
+        // 1st year: 48 LEC, 4 LAB | 2nd year: 48 LEC, 3 LAB | 3rd year: 45 LEC, 2 LAB | 4th year: 42 LEC, 2 LAB
+        $unitMap = [
+            '1st Year' => ['lec' => 48, 'lab' => 4],
+            '2nd Year' => ['lec' => 48, 'lab' => 3],
+            '3rd Year' => ['lec' => 45, 'lab' => 2],
+            '4th Year' => ['lec' => 42, 'lab' => 2],
+        ];
+        $units = $unitMap[$yearLevel] ?? ['lec' => 48, 'lab' => 3];
 
         $assessment = StudentAssessment::create([
             'user_id'           => $student->id,
@@ -226,13 +229,10 @@ class ComprehensiveAssessmentSeeder extends Seeder
             'year_level'        => $yearLevel,
             'semester'          => $semester,
             'school_year'       => $this->schoolYear,
-            'tuition_fee'       => $grandTotal,
-            'other_fees'        => 0,
+            'lec_units'         => $units['lec'],
+            'lab_units'         => $units['lab'],
             'total_assessment'  => $grandTotal,
-            'subjects'          => [],
-            'fee_breakdown'     => $feeBreakdown,
             'status'            => 'active',
-            'created_by'        => $adminId,
         ]);
 
         // DISABLED: Do not create charge transactions during seeding

@@ -62,6 +62,8 @@ Route::middleware(['auth', 'verified', 'role:student'])->prefix('student')->grou
     Route::post('reminders/{reminder}/dismiss', [PaymentReminderController::class, 'dismiss'])
         ->name('reminders.dismiss');
     Route::post('/account/pay-now', [TransactionController::class, 'payNow'])->name('account.pay-now');
+    Route::get('/payment/{transaction}/proof', [PaymentController::class, 'showProofForm'])->name('payment.proof.show');
+    Route::post('/payment/{transaction}/proof', [PaymentController::class, 'uploadProof'])->name('payment.proof.upload');
 });
 
 // ============================================

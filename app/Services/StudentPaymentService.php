@@ -121,10 +121,10 @@ class StudentPaymentService
                         'student_assessment_id' => $term->student_assessment_id,
                         'amount'               => $amount,
                         'payment_method'       => $options['payment_method'] ?? null,
-                        'reference_number'     => $reference,
                         'description'          => $description,
                         'status'               => PaymentStatus::COMPLETED->value,
-                        'paid_at'              => $options['paid_at'] ?? now(),
+                        'created_at'           => $options['paid_at'] ?? now(),
+                        'updated_at'           => $options['paid_at'] ?? now(),
                     ]);
                 }
 
@@ -318,11 +318,11 @@ class StudentPaymentService
                         'student_assessment_id' => $term->student_assessment_id,
                         'amount'                => $alloc['applied'],
                         'payment_method'        => $transaction->payment_channel,
-                        'reference_number'      => $transaction->reference,
                         'description'           => 'Payment — ' . $alloc['term_name']
                             . ' (from ₱' . number_format($totalApplied, 2) . ' total)',
                         'status'                => PaymentStatus::COMPLETED->value,
-                        'paid_at'               => $transaction->paid_at ?? now(),
+                        'created_at'            => $transaction->created_at ?? now(),
+                        'updated_at'            => $transaction->created_at ?? now(),
                     ]);
                 }
             }

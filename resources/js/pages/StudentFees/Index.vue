@@ -67,8 +67,8 @@ const page = usePage();
 const isAdmin = computed(() => (page.props.auth as any).user?.role === 'admin');
 const isAccounting = computed(() => (page.props.auth as any).user?.role === 'accounting');
  
-const pageTitle = computed(() => isAdmin ? 'Student Management' : 'Student Fee Management');
-const pageDescription = computed(() => isAdmin ? 'View student information and create new students' : 'Manage student assessments and fee records');
+const pageTitle = computed(() => isAdmin.value ? 'Student Management' : 'Student Fee Management');
+const pageDescription = computed(() => isAdmin.value ? 'View student information and create new students' : 'Manage student assessments and fee records');
  
 const breadcrumbs = computed(() => [{ title: 'Dashboard', href: route('dashboard') }, { title: pageTitle.value }]);
  

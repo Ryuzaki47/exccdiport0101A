@@ -6,7 +6,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Head, useForm } from '@inertiajs/vue3';
-import axios from 'axios';
 import { ArrowLeft, Briefcase, Eye, EyeOff, GraduationCap, LoaderCircle, Shield } from 'lucide-vue-next';
 import { computed, ref } from 'vue';
 
@@ -14,7 +13,6 @@ defineProps<{ status?: string; canResetPassword: boolean }>();
 
 const selectedRole = ref<'admin' | 'accounting' | 'student' | null>(null);
 const showPassword = ref(false);
-const isSubmitting = ref(false);
 
 const form = useForm({
     email: '',
@@ -33,19 +31,18 @@ const currentRole = computed(() => roleOptions.find((r) => r.value === selectedR
 const selectRole = (role: 'admin' | 'accounting' | 'student') => { selectedRole.value = role; form.role = role; };
 const backToRoleSelection = () => { selectedRole.value = null; form.reset('password'); };
 
-const submit = async () => {
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-    if (!csrfToken) return;
-    isSubmitting.value = true;
-    try {
-        await axios.post('/login', { email: form.email, password: form.password, remember: form.remember ? 1 : 0, role: form.role, _token: csrfToken }, { headers: { 'X-CSRF-TOKEN': csrfToken, Accept: 'application/json' } });
-        window.location.href = '/dashboard';
-    } catch (error: any) {
-        if (error.response?.status === 422) { form.errors = error.response.data.errors || {}; }
-        else if (error.response?.status === 419) { window.location.reload(); }
-    } finally {
-        isSubmitting.value = false;
+const submit = () => {
+    if (!selectedRole.value) {
+        form.errors.role = ['Please select a role before logging in.'];
+        return;
     }
+
+    form.post(route('login.store'), {
+        preserveScroll: true,
+        onError: () => {
+            form.reset('password');
+        },
+    });
 };
 </script>
 
@@ -144,11 +141,11 @@ const submit = async () => {
 
                         <button
                             type="submit"
-                            :disabled="isSubmitting"
+                            :disabled="form.processing"
                             class="flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-semibold text-white transition-all hover:opacity-90 disabled:opacity-60"
                             :style="{ background: 'linear-gradient(135deg, ' + currentRole?.iconBg + ' 0%, ' + currentRole?.iconBg + 'cc 100%)' }"
                         >
-                            <LoaderCircle v-if="isSubmitting" :size="16" class="animate-spin" />
+                            <LoaderCircle v-if="form.processing" :size="16" class="animate-spin" />
                             Log in
                         </button>
 

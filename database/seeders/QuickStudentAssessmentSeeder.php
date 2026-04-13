@@ -79,6 +79,10 @@ class QuickStudentAssessmentSeeder extends Seeder
 
         $totalAssessment = $tuitionFee + $labFee + $otherFeesTotal;
 
+        // Calculate units (estimate from subjects)
+        $lecUnits = $subjects->sum('units');
+        $labUnits = $subjects->where('has_lab', true)->count();
+
         // Create assessment
         $assessment = StudentAssessment::create([
             'user_id' => $student->id,
@@ -86,13 +90,10 @@ class QuickStudentAssessmentSeeder extends Seeder
             'year_level' => $student->year_level,
             'semester' => $semester,
             'school_year' => $schoolYear,
-            'tuition_fee' => $tuitionFee + $labFee,
-            'other_fees' => $otherFeesTotal,
+            'lec_units' => $lecUnits,
+            'lab_units' => $labUnits,
             'total_assessment' => $totalAssessment,
-            'subjects' => $subjectData,
-            'fee_breakdown' => $feeBreakdown,
             'status' => 'active',
-            'created_by' => $this->getOrFindAdminUserId(),
         ]);
 
         // Create subject transactions

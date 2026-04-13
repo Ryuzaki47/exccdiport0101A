@@ -93,6 +93,29 @@ class StudentAssessment extends Model
         return (float) $this->paymentTerms->sum('balance');
     }
 
+    // ─── Static Methods ───────────────────────────────────────────────────────
+
+    /**
+     * Generate a unique assessment number.
+     * Format: ASMT-{year}-{sequential}
+     * Example: ASMT-2025-0001
+     */
+    public static function generateAssessmentNumber(): string
+    {
+        $currentYear = date('Y');
+        $lastAssessment = static::where('assessment_number', 'like', "ASMT-{$currentYear}-%")
+            ->orderBy('assessment_number', 'desc')
+            ->first();
+
+        if ($lastAssessment && preg_match('/ASMT-\d+-(\d+)/', $lastAssessment->assessment_number, $matches)) {
+            $nextNum = intval($matches[1]) + 1;
+        } else {
+            $nextNum = 1;
+        }
+
+        return sprintf('ASMT-%s-%04d', $currentYear, $nextNum);
+    }
+
     // ─── Scopes ───────────────────────────────────────────────────────────────
 
     public function scopeActive($query)

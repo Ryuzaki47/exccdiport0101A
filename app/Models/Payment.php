@@ -32,29 +32,35 @@ class Payment extends Model
     const STATUS_FAILED    = 'failed';                        // error state only
 
     protected $fillable = [
+        'user_id',
         'student_id',
         'student_assessment_id',
         'amount',
         'description',
         'payment_method',
-        'reference_number',
         'status',
-        'paid_at',
-        // ✅ Bagong PayMongo fields
+        // ✅ PayMongo fields
         'paymongo_source_id',
+        'paymongo_intent_id',
         'paymongo_payment_id',
         'proof_of_payment',
         'notes',
+        'meta',
     ];
 
     protected $casts = [
         'amount'  => 'decimal:2',
-        'paid_at' => 'datetime',
+        'meta'    => 'json',
     ];
 
     // =========================================================================
     // RELATIONSHIPS
     // =========================================================================
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
 
     public function student(): BelongsTo
     {

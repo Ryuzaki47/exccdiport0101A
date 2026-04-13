@@ -252,15 +252,13 @@ class StudentTransactionHistorySeeder extends Seeder
             'year_level' => $termConfig['year'],
             'semester' => $termConfig['semester'],
             'school_year' => $termConfig['year_num'],
-            'tuition_fee' => self::TOTAL_ASSESSMENT_PER_TERM * 0.7,
-            'other_fees' => self::TOTAL_ASSESSMENT_PER_TERM * 0.3,
+            'lec_units' => 48,
+            'lab_units' => 3,
             'total_assessment' => self::TOTAL_ASSESSMENT_PER_TERM,
             'status' => 'active',
-            'created_by' => $this->getOrFindAdminUserId(),
         ]);
 
         // Create payment terms
-        $termsData = [];
         $totalAmount = 0;
         $totalTerms = count(self::PAYMENT_TERMS);
         $termIndex = 0;
@@ -345,11 +343,10 @@ class StudentTransactionHistorySeeder extends Seeder
             'year_level' => $termConfig['year'],
             'semester' => $termConfig['semester'],
             'school_year' => $termConfig['year_num'],
-            'tuition_fee' => self::TOTAL_ASSESSMENT_PER_TERM * 0.7,
-            'other_fees' => self::TOTAL_ASSESSMENT_PER_TERM * 0.3,
+            'lec_units' => 48,
+            'lab_units' => 3,
             'total_assessment' => self::TOTAL_ASSESSMENT_PER_TERM,
             'status' => 'active',
-            'created_by' => $this->getOrFindAdminUserId(),
         ]);
 
         // Create payment terms - ALL UNPAID

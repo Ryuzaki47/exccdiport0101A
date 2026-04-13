@@ -13,7 +13,7 @@ defineProps<{
 }>();
 
 const breadcrumbs = [
-    { title: 'Dashboard', href: route('dashboard') },
+    { title: 'Dashboard', href: route('admin.dashboard') },
     { title: 'Student Fee Management', href: route('student-fees.index') },
     { title: 'Add Student' },
 ];
@@ -23,8 +23,6 @@ const form = useForm({
     first_name: '',
     middle_initial: '',
     email: '',
-    password: 'password',
-    password_confirmation: 'password',
     birthday: '',
     year_level: '',
     course: '',
