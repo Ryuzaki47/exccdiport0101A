@@ -228,6 +228,9 @@ class PaymentController extends Controller
 
         $session = $response->json('data');
 
+        // Extract payment_intent_id from PayMongo response for webhook linkage
+        $paymentIntentId = data_get($session, 'attributes.payment_intent.id');
+
         // Store a pending Payment row so we can look it up on redirect success
         Payment::create([
             'user_id'               => $user->id,
@@ -242,8 +245,23 @@ class PaymentController extends Controller
                 'selected_term_id'  => $validated['selected_term_id'],
                 'term_name'         => $termInfo?->term_name ?? 'Payment',
                 'paymongo_checkout' => true,
+                'payment_intent_id' => $paymentIntentId,
             ],
         ]);
+
+        // ✅ NEW: Store payment_intent_id in StudentPaymentTerm so webhook can find it
+        if ($termInfo && $paymentIntentId) {
+            $termInfo->update([
+                'payment_intent_id' => $paymentIntentId,
+            ]);
+
+            Log::info('PayMongo payment_intent_id stored for webhook linkage', [
+                'payment_term_id'   => $termInfo->id,
+                'user_id'           => $user->id,
+                'payment_intent_id' => $paymentIntentId,
+                'session_id'        => $session['id'],
+            ]);
+        }
 
         return response()->json([
             'checkout_url' => data_get($session, 'attributes.checkout_url'),
