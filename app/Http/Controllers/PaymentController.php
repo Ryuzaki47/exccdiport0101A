@@ -54,6 +54,17 @@ class PaymentController extends Controller
             ? StudentPaymentTerm::where('student_assessment_id', $assessment->id)
                 ->orderBy('term_order')
                 ->get()
+                ->map(fn ($term) => [
+                    'id'         => $term->id,
+                    'term_name'  => $term->term_name,
+                    'term_order' => $term->term_order,
+                    'percentage' => $term->percentage,
+                    'amount'     => (float) $term->amount,
+                    'balance'    => (float) $term->balance,
+                    'due_date'   => $term->due_date?->format('Y-m-d'),
+                    'status'     => $term->status,
+                    'remarks'    => $term->remarks,
+                ])
             : collect();
 
         $pendingApprovalPayments = $assessment
