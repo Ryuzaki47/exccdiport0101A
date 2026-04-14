@@ -2,7 +2,7 @@
 import AppLayout from '@/layouts/AppLayout.vue';
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import { useDataFormatting } from '@/composables/useDataFormatting';
-import { Head, router, useForm } from '@inertiajs/vue3';
+import { Head, router, useForm, usePage } from '@inertiajs/vue3';
 import { computed, ref, watch } from 'vue';
 import { AlertCircle, CheckCircle, Clock } from 'lucide-vue-next';
 
@@ -214,7 +214,12 @@ const submitCheckout = async () => {
 };
 
 const submitInternalPayment = () => {
+    const page = usePage();
+    const csrfToken = (page.props as any).csrf_token || '';
     form.post(route('account.pay-now'), {
+        headers: {
+            'X-CSRF-TOKEN': csrfToken,
+        },
         preserveScroll: true,
         onSuccess: () => {
             submitSuccess.value = true;

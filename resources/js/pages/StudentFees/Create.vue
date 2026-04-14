@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useForm, router } from '@inertiajs/vue3'
+import { useForm, usePage } from '@inertiajs/vue3'
 import AppLayout from '@/layouts/AppLayout.vue'
 import Breadcrumbs from '@/components/Breadcrumbs.vue'
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDataFormatting } from '@/composables/useDataFormatting'
 import { Search, User, BookOpen, FlaskConical, Calculator, CheckCircle2 } from 'lucide-vue-next'
+import axios from 'axios'
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 
@@ -85,7 +86,26 @@ function selectStudent(student: PreselectedStudent) {
 function clearStudent() {
   selectedStudent.value = null
   form.user_id          = 0
+  form.lec_units        = 0
+  form.lab_units        = 0
 }
+
+// ─── Auto-fill units from previous assessment ─────────────────────────────
+watch(selectedStudent, async (student) => {
+  if (!student?.id) return
+
+  try {
+    const res = await axios.get(route('student-fees.latest-assessment'), {
+      params: { student_id: student.id }
+    })
+    if (res.data.found) {
+      form.lec_units = res.data.lec_units
+      form.lab_units = res.data.lab_units
+    }
+  } catch {
+    // silent fail — accounting can still input manually
+  }
+})
 
 // ─── Form ─────────────────────────────────────────────────────────────────────
 
@@ -134,10 +154,17 @@ const paymentTermBreakdown = computed(() =>
 
 // ─── Submit ───────────────────────────────────────────────────────────────────
 
+const page = usePage()
+
 function submit() {
   if (!selectedStudent.value) return
   form.user_id = selectedStudent.value.id
-  form.post(route('student-fees.store'))
+  const csrfToken = (page.props as any).csrf_token || ''
+  form.post(route('student-fees.store'), {
+    headers: {
+      'X-CSRF-TOKEN': csrfToken,
+    },
+  })
 }
 </script>
 

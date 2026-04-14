@@ -241,7 +241,11 @@ const closeDrop = () => {
  
 const submitDrop = () => {
     if (!selectedDropStudent.value) return;
+    const csrfToken = (page.props as any).csrf_token || '';
     dropForm.post(route('student-fees.drop', selectedDropStudent.value.id), {
+        headers: {
+            'X-CSRF-TOKEN': csrfToken,
+        },
         onSuccess: () => closeDrop(),
     });
 };

@@ -2,7 +2,7 @@
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import { useDataFormatting } from '@/composables/useDataFormatting';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, Link, router, useForm } from '@inertiajs/vue3';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 
 interface WorkflowMeta {
@@ -132,7 +132,14 @@ const applyServerFilter = () => {
 };
 
 const approve = (id: number) => {
-    approveForm.post(route('approvals.approve', id), { preserveScroll: true });
+    const page = usePage();
+    const csrfToken = (page.props as any).csrf_token || '';
+    approveForm.post(route('approvals.approve', id), {
+        headers: {
+            'X-CSRF-TOKEN': csrfToken,
+        },
+        preserveScroll: true,
+    });
 };
 
 const openRejectDialog = (id: number) => {
@@ -143,7 +150,12 @@ const openRejectDialog = (id: number) => {
 
 const submitRejection = () => {
     if (!selectedApprovalId.value) return;
+    const page = usePage();
+    const csrfToken = (page.props as any).csrf_token || '';
     rejectForm.post(route('approvals.reject', selectedApprovalId.value), {
+        headers: {
+            'X-CSRF-TOKEN': csrfToken,
+        },
         onSuccess: () => { showRejectDialog.value = false; },
     });
 };

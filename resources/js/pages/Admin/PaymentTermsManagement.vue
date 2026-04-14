@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useDataFormatting } from '@/composables/useDataFormatting';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, useForm } from '@inertiajs/vue3';
+import { Head, useForm, usePage } from '@inertiajs/vue3';
 import { AlertCircle, Check, Edit2, Layers } from 'lucide-vue-next';
 import { computed, ref } from 'vue';
 const { formatCurrency } = useDataFormatting();
@@ -101,7 +101,12 @@ const closeEditDialog = () => {
 const submitSingleDueDate = () => {
     if (!selectedTerm.value || !editForm.due_date) return;
 
+    const page = usePage();
+    const csrfToken = (page.props as any).csrf_token || '';
     editForm.post(route('admin.payment-terms.update-due-date', selectedTerm.value.id), {
+        headers: {
+            'X-CSRF-TOKEN': csrfToken,
+        },
         onSuccess: () => {
             closeEditDialog();
         },
@@ -137,7 +142,12 @@ const closeBulkDialog = () => {
 const submitBulkDueDate = () => {
     if (!bulkForm.term_name || !bulkForm.due_date) return;
 
+    const page = usePage();
+    const csrfToken = (page.props as any).csrf_token || '';
     bulkForm.post(route('admin.payment-terms.bulk-due-date'), {
+        headers: {
+            'X-CSRF-TOKEN': csrfToken,
+        },
         onSuccess: () => {
             closeBulkDialog();
         },

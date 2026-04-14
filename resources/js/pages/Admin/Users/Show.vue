@@ -2,7 +2,7 @@
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import { Button } from '@/components/ui/button';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref } from 'vue';
 
 interface Props {
@@ -23,11 +23,13 @@ const formatDate = (d: string | null) => (d ? new Date(d).toLocaleDateString('en
 
 const confirmDeactivate = () => {
     showDeactivateWarning.value = false;
-    router.post(route('admin.users.deactivate', props.admin.id));
+    const form = useForm({});
+    form.post(route('admin.users.deactivate', props.admin.id));
 };
 
 const reactivate = () => {
-    router.post(route('admin.users.reactivate', props.admin.id));
+    const form = useForm({});
+    form.post(route('admin.users.reactivate', props.admin.id));
 };
 </script>
 

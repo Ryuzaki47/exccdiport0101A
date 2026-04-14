@@ -857,6 +857,29 @@ class StudentFeeController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────
+    //  GET LATEST ASSESSMENT DATA (for auto-fill)
+    // ─────────────────────────────────────────────────────────────
+
+    public function getLatestAssessmentData(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $validated = $request->validate(['student_id' => 'required|exists:users,id']);
+
+        $latest = StudentAssessment::where('user_id', $validated['student_id'])
+            ->orderByDesc('created_at')
+            ->first();
+
+        if (!$latest) {
+            return response()->json(['found' => false]);
+        }
+
+        return response()->json([
+            'found'     => true,
+            'lec_units' => $latest->lec_units,
+            'lab_units' => $latest->lab_units,
+        ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────
     //  HELPER: Generate unique account ID
     // ─────────────────────────────────────────────────────────────
 

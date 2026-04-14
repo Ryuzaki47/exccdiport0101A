@@ -2,7 +2,7 @@
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import { useDataFormatting } from '@/composables/useDataFormatting';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, useForm } from '@inertiajs/vue3';
 import { AlertCircle, Bell, CalendarClock, CheckCircle, Clock } from 'lucide-vue-next';
 import { computed, ref } from 'vue';
 
@@ -202,14 +202,11 @@ const hasMoreNotifications = computed(() => activeNotifications.value.length > 3
 
 const dismissNotification = (id: number) => {
     hiddenNotifications.value.add(id);
-    router.post(
-        route('notifications.dismiss', id),
-        {},
-        {
-            preserveScroll: true,
-            preserveState: true,
-        },
-    );
+    const form = useForm({});
+    form.post(route('notifications.dismiss', id), {
+        preserveScroll: true,
+        preserveState: true,
+    });
 };
 
 // ── Payment Reminder actions ──────────────────────────────────────────────────
@@ -220,26 +217,20 @@ const hiddenReminders = ref<Set<number>>(new Set());
 const visibleReminders = computed(() => (props.paymentReminders ?? []).filter((r) => !hiddenReminders.value.has(r.id)));
 
 const markReminderRead = (id: number) => {
-    router.post(
-        route('reminders.read', id),
-        {},
-        {
-            preserveScroll: true,
-            preserveState: true,
-        },
-    );
+    const form = useForm({});
+    form.post(route('reminders.read', id), {
+        preserveScroll: true,
+        preserveState: true,
+    });
 };
 
 const dismissReminder = (id: number) => {
     hiddenReminders.value.add(id);
-    router.post(
-        route('reminders.dismiss', id),
-        {},
-        {
-            preserveScroll: true,
-            preserveState: true,
-        },
-    );
+    const form = useForm({});
+    form.post(route('reminders.dismiss', id), {
+        preserveScroll: true,
+        preserveState: true,
+    });
 };
 </script>
 

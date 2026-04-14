@@ -117,6 +117,9 @@ Route::middleware(['auth', 'verified', 'role:admin,accounting'])
 
         // IMPORTANT: Specific static-segment routes MUST be registered
         // BEFORE the wildcard /{userId} catch-all to prevent route collision.
+        Route::get('/latest-assessment', [StudentFeeController::class, 'getLatestAssessmentData'])
+            ->name('latest-assessment');
+
         Route::get('/{userId}/edit', [StudentFeeController::class, 'edit'])
             ->whereNumber('userId')
             ->name('edit');

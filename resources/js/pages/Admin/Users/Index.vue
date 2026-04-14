@@ -2,7 +2,7 @@
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import { Button } from '@/components/ui/button';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, useForm } from '@inertiajs/vue3';
 
 interface Admin {
     id: number;
@@ -46,12 +46,14 @@ const departmentBadge = (dept: string) => {
 
 const deactivate = (id: number) => {
     if (confirm('Deactivate this admin?')) {
-        router.post(route('admin.users.deactivate', id));
+        const form = useForm({});
+        form.post(route('admin.users.deactivate', id));
     }
 };
 
 const reactivate = (id: number) => {
-    router.post(route('admin.users.reactivate', id));
+    const form = useForm({});
+    form.post(route('admin.users.reactivate', id));
 };
 </script>
 

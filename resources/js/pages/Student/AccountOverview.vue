@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useDataFormatting } from '@/composables/useDataFormatting';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { Head, Link, usePage, useForm } from '@inertiajs/vue3';
 import { AlertCircle, CalendarClock, CheckCircle, Clock, XCircle } from 'lucide-vue-next';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
@@ -201,7 +201,11 @@ const dueDateLabel = (dueDateStr: string | null | undefined): string => {
 
 const dismissNotification = (notificationId: number) => {
     hiddenNotifications.value.add(notificationId);
-    router.post(route('notifications.dismiss', notificationId));
+    const form = useForm({});
+    form.post(route('notifications.dismiss', notificationId), {
+        preserveScroll: true,
+        preserveState: true,
+    });
 };
 
 // ── Financial computations ────────────────────────────────────────────────────

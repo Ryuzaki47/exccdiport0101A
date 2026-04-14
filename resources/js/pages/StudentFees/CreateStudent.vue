@@ -4,13 +4,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, Link, useForm } from '@inertiajs/vue3';
+import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
 import { ArrowLeft } from 'lucide-vue-next';
 
 defineProps<{
     courses: string[];
     yearLevels: string[];
 }>();
+
+const page = usePage();
 
 const breadcrumbs = [
     { title: 'Dashboard', href: route('admin.dashboard') },
@@ -31,8 +33,13 @@ const form = useForm({
 });
 
 const submit = () => {
+    // Explicitly include CSRF token to ensure middleware validation passes
+    const csrfToken = (page.props as any).csrf_token || '';
     form.post(route('student-fees.store-student'), {
         preserveScroll: true,
+        headers: {
+            'X-CSRF-TOKEN': csrfToken,
+        },
         onSuccess: () => {
             form.reset();
         },
