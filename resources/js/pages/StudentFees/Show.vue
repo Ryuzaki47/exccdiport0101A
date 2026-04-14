@@ -186,6 +186,8 @@ const labItems = computed(() => {
         .filter((item: any) => item.category === 'Laboratory')
         .map((item: any) => ({
             ...item,
+            // units comes from the controller (assessment.lab_units)
+            units: item.units ?? selectedAssess.lab_units ?? 0,
             displayName: item.name?.replace('Laboratory Fee — ', '') || 'Laboratory',
             amount: parseFloat(String(item.amount)),
         }));
@@ -205,66 +207,74 @@ interface MiscItemGroup {
     total: number;
 }
 
+// Miscellaneous fees — use the miscItems prop (from config('fees.misc_items'))
+// rather than trying to pattern-match the single "Miscellaneous Fee" line in
+// fee_breakdown. The controller always sends one lumped Misc entry; the
+// itemized breakdown lives in props.miscItems.
 const miscellaneousItemsByGroup = computed((): MiscItemGroup[] => {
     const selectedAssess = selectedAssessment.value as any;
     if (!selectedAssess) return [];
 
-    const breakdown = selectedAssess.fee_breakdown ?? [];
-    const miscItems = breakdown.filter((item: any) => item.category === 'Miscellaneous' || item.category === 'Other');
+    // Total misc from fee_breakdown (authoritative — computed by controller)
+    const miscEntry = (selectedAssess.fee_breakdown ?? []).find((item: any) => item.category === 'Miscellaneous');
+    if (!miscEntry) return [];
 
-    // Organize by logical subcategories
+    // Use the per-item list from the fees config for the itemized display
+    const items: Array<{ name: string; amount: number }> = (props.miscItems ?? [])
+        .filter((i: any) => parseFloat(String(i.amount)) > 0)
+        .map((i: any) => ({ name: i.label ?? i.name, amount: parseFloat(String(i.amount)) }));
+
+    if (items.length === 0) {
+        // Fallback: show single lump entry
+        return [{
+            category: 'Miscellaneous',
+            subcategory: 'Miscellaneous',
+            label: 'Miscellaneous Fees',
+            items: [{ name: 'Miscellaneous Fee (Fixed)', amount: parseFloat(String(miscEntry.amount)) }],
+            total: parseFloat(String(miscEntry.amount)),
+        }];
+    }
+
+    // Group into academic / student life / support (same categories as before)
+    const academicPatterns = ['registration', 'lms', 'library', 'entrepreneurship'];
+    const studentPatterns  = ['athletic', 'prisaa', 'publication', 'id', 'biccs', 'pccl', 'league', 'audio-visual', 'faculty development', 'guidance', 'entrep'];
+    const supportPatterns  = ['medical', 'insurance', 'cultural', 'maintenance'];
+
     const categories: Record<string, MiscItemGroup> = {
-        academic: {
-            category: 'Academic Services',
-            subcategory: 'Academic',
-            label: 'Academic Services',
-            items: [],
-            total: 0,
-        },
-        student_life: {
-            category: 'Student Life & Activities',
-            subcategory: 'Student',
-            label: 'Student Life & Activities',
-            items: [],
-            total: 0,
-        },
-        support: {
-            category: 'Support Services',
-            subcategory: 'Support',
-            label: 'Support Services',
-            items: [],
-            total: 0,
-        },
+        academic:     { category: 'Academic Services',       subcategory: 'Academic', label: 'Academic Services',       items: [], total: 0 },
+        student_life: { category: 'Student Life & Activities', subcategory: 'Student', label: 'Student Life & Activities', items: [], total: 0 },
+        support:      { category: 'Support Services',        subcategory: 'Support',  label: 'Support Services',        items: [], total: 0 },
+        other:        { category: 'Other Fees',              subcategory: 'Other',    label: 'Other Fees',              items: [], total: 0 },
     };
 
-    // Classify miscellaneous items based on name patterns
-    const academicPatterns = ['registration', 'lms', 'library'];
-    const studentPatterns = ['athletic', 'prisaa', 'publication', 'id', 'biccs', 'pccl', 'league', 'audio-visual', 'faculty development', 'guidance', 'entrep'];
-    const supportPatterns = ['medical', 'insurance', 'cultural', 'maintenance'];
-
-    for (const item of miscItems) {
-        const name = item.name?.toLowerCase() || '';
-        const amount = parseFloat(String(item.amount));
-        const itemObj = { name: item.name, amount };
-
+    for (const item of items) {
+        const name = item.name.toLowerCase();
         if (academicPatterns.some((p) => name.includes(p))) {
-            categories.academic.items.push(itemObj);
-            categories.academic.total += amount;
+            categories.academic.items.push(item);
+            categories.academic.total += item.amount;
         } else if (studentPatterns.some((p) => name.includes(p))) {
-            categories.student_life.items.push(itemObj);
-            categories.student_life.total += amount;
+            categories.student_life.items.push(item);
+            categories.student_life.total += item.amount;
         } else if (supportPatterns.some((p) => name.includes(p))) {
-            categories.support.items.push(itemObj);
-            categories.support.total += amount;
+            categories.support.items.push(item);
+            categories.support.total += item.amount;
+        } else {
+            categories.other.items.push(item);
+            categories.other.total += item.amount;
         }
     }
 
     return Object.values(categories).filter((cat) => cat.items.length > 0);
 });
 
-// Total miscellaneous fees
+// Total miscellaneous fees — prefer summing groups, but fall back to the
+// single Miscellaneous entry in fee_breakdown to avoid showing ₱0.
 const totalMiscellaneous = computed(() => {
-    return Math.round(miscellaneousItemsByGroup.value.reduce((sum, group) => sum + group.total, 0) * 100) / 100;
+    const fromGroups = Math.round(miscellaneousItemsByGroup.value.reduce((sum, group) => sum + group.total, 0) * 100) / 100;
+    if (fromGroups > 0) return fromGroups;
+    // Fallback: read directly from the assessment fee_breakdown
+    const miscEntry = ((selectedAssessment.value as any)?.fee_breakdown ?? []).find((i: any) => i.category === 'Miscellaneous');
+    return miscEntry ? parseFloat(String(miscEntry.amount)) : 0;
 });
 
 // Fee calculation summary showing the formula (e.g., "28.5 units × ₱364 + 5 labs × ₱1,656 + ₱6,956")

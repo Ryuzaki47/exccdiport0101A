@@ -27,6 +27,16 @@ interface Approval {
     };
 }
 
+interface Student {
+    id: number;
+    student_id: string | null;
+    user?: {
+        first_name: string;
+        last_name: string;
+        account_id: string;
+    };
+}
+
 interface UnpaidTerm {
     id: number;
     term_name: string;
@@ -38,6 +48,7 @@ interface UnpaidTerm {
 
 interface Props {
     approval: Approval;
+    student?: Student | null;
     unpaidTerms?: UnpaidTerm[];
 }
 
@@ -144,13 +155,19 @@ const refreshApproval = () => {
                         <p class="text-sm text-gray-500">Student</p>
                         <p class="font-semibold">
                             {{
-                                approval.workflow_instance?.workflowable?.user
-                                    ? `${approval.workflow_instance.workflowable.user.last_name}, ${approval.workflow_instance.workflowable.user.first_name}`
-                                    : '—'
+                                student?.user
+                                    ? `${student.user.last_name}, ${student.user.first_name}`
+                                    : approval.workflow_instance?.workflowable?.user
+                                        ? `${approval.workflow_instance.workflowable.user.last_name}, ${approval.workflow_instance.workflowable.user.first_name}`
+                                        : '—'
                             }}
                         </p>
                         <p class="text-xs text-gray-400">
-                            {{ approval.workflow_instance?.workflowable?.user?.account_id ?? '' }}
+                            {{
+                                student?.user?.account_id
+                                    ?? approval.workflow_instance?.workflowable?.user?.account_id
+                                    ?? ''
+                            }}
                         </p>
                     </div>
                     <div>

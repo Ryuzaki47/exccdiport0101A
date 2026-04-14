@@ -161,26 +161,32 @@ class WorkflowService
 
     public function approveStep(WorkflowApproval $approval, int $userId, ?string $comments = null): void
     {
-        DB::transaction(function () use ($approval, $userId, $comments) {
+        // Step 1: approve the record and advance the workflow inside a transaction.
+        // onWorkflowCompleted() is intentionally called OUTSIDE this transaction
+        // so that a finalization failure does NOT roll back the approval record.
+        // This means: approval is always committed, and finalization is retryable.
+        $instance = DB::transaction(function () use ($approval, $userId, $comments) {
             $approval->approve($comments);
 
-            // Check if all approvals for this step are approved
+            // Check if all approvals for this step are now approved
             $pendingApprovals = WorkflowApproval::where('workflow_instance_id', $approval->workflow_instance_id)
                 ->where('step_name', $approval->step_name)
                 ->where('status', 'pending')
                 ->count();
 
             if ($pendingApprovals === 0) {
-                // All approvals done, advance workflow
                 $this->advanceWorkflow($approval->workflowInstance, $userId);
-
-                // After advancing, check if workflow is now completed
-                $instance = $approval->workflowInstance->fresh();
-                if ($instance->isCompleted()) {
-                    $this->onWorkflowCompleted($instance);
-                }
             }
+
+            return $approval->workflowInstance->fresh();
         });
+
+        // Step 2: if the workflow reached 'completed', finalize the payment OUTSIDE
+        // the approval transaction. If finalization fails, the approval stays committed
+        // (accounting doesn't have to re-approve) and the error is surfaced cleanly.
+        if ($instance->isCompleted()) {
+            $this->onWorkflowCompleted($instance);
+        }
     }
 
     public function rejectStep(WorkflowApproval $approval, int $userId, string $comments): void

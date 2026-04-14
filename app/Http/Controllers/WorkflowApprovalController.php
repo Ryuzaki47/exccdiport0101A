@@ -59,7 +59,7 @@ class WorkflowApprovalController extends Controller
 
         $approval->load([
             'workflowInstance.workflow',
-            'workflowInstance.workflowable',
+            'workflowInstance.workflowable.user',   // ← eager-load user so template has student name
             'workflowInstance.approvals',
         ]);
 
@@ -68,8 +68,8 @@ class WorkflowApprovalController extends Controller
         $unpaidTerms = null;
 
         if ($transaction instanceof \App\Models\Transaction && $transaction->user && $transaction->user->student) {
-            $student     = $transaction->user->student;
-            // Query through StudentAssessment for consistent access patterns
+            $student = $transaction->user->student->load('user');
+
             $unpaidTerms = StudentPaymentTerm::whereHas('assessment', function ($q) use ($transaction) {
                 $q->where('user_id', $transaction->user_id);
             })
@@ -78,7 +78,6 @@ class WorkflowApprovalController extends Controller
                 ->get();
         }
 
-        // BUG FIX #3: Pass $student to view so Approvals/Show.vue can display student details
         return Inertia::render('Approvals/Show', [
             'approval'    => $approval,
             'student'     => $student,

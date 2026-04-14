@@ -34,9 +34,14 @@ Route::get('/', function () {
 // PayMongo Webhook — No authentication required (called by PayMongo servers)
 Route::post('/webhook/paymongo', [PaymongoWebhookController::class, 'handle']);
 
-// PayMongo Redirect Routes — Payment success/cancel callbacks
-Route::get('/payment/success', [PaymentController::class, 'success'])->name('payment.success');
-Route::get('/payment/cancel', [PaymentController::class, 'cancel'])->name('payment.cancel');
+// PayMongo Redirect Routes — must be inside auth so auth()->user() is never null.
+// PayMongo redirects the student's authenticated browser session back here,
+// so the session cookie will always be present on a normal flow.
+// If the session has expired, redirectToLogin() is safer than a null-user crash.
+Route::middleware(['auth'])->group(function () {
+    Route::get('/payment/success', [PaymentController::class, 'success'])->name('payment.success');
+    Route::get('/payment/cancel',  [PaymentController::class, 'cancel'])->name('payment.cancel');
+});
 
 // ============================================
 // AUTHENTICATED ROUTES

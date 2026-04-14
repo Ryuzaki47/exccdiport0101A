@@ -318,10 +318,64 @@ class StudentFeeController extends Controller
     {
         $user = User::with([
             'latestAssessment.paymentTerms',
+            'account',
         ])->findOrFail($userId);
+
+        // ── Load ALL assessments for this student so the assessment selector
+        //    in the Vue component works and allAssessments is never empty. ──────
+        $allAssessmentsRaw = StudentAssessment::where('user_id', $userId)
+            ->with('paymentTerms')
+            ->orderByDesc('created_at')
+            ->get();
 
         $assessment = $user->latestAssessment;
 
+        // ── Build fee breakdown for EACH assessment ───────────────────────────
+        $allAssessmentsFormatted = $allAssessmentsRaw->map(function ($a) use ($user) {
+            $fees = $this->computeTotal($a->lec_units, $a->lab_units);
+
+            return [
+                'id'               => $a->id,
+                'course'           => $user->course,
+                'semester'         => $a->semester,
+                'school_year'      => $a->school_year,
+                'year_level'       => $user->year_level,
+                'total_assessment' => (float) $a->total_assessment,
+                'tuition_fee'      => $fees['tuitionFee'],
+                'lab_fee'          => $fees['labFee'],
+                'misc_fee'         => $fees['miscFee'],
+                'other_fees'       => $fees['labFee'] + $fees['miscFee'],
+                'lec_units'        => $a->lec_units,
+                'lab_units'        => $a->lab_units,
+                'fee_breakdown'    => [
+                    [
+                        'category' => 'Tuition',
+                        'name'     => 'Tuition Fee',
+                        'code'     => 'TUI',
+                        'units'    => $a->lec_units,
+                        'amount'   => $fees['tuitionFee'],
+                    ],
+                    [
+                        'category' => 'Laboratory',
+                        'name'     => 'Laboratory Fee',
+                        'code'     => 'LAB',
+                        'units'    => $a->lab_units,
+                        'amount'   => $fees['labFee'],
+                    ],
+                    [
+                        'category' => 'Miscellaneous',
+                        'name'     => 'Miscellaneous Fee',
+                        'code'     => 'MISC',
+                        'units'    => null,
+                        'amount'   => $fees['miscFee'],
+                    ],
+                ],
+                'status'       => $a->status,
+                'paymentTerms' => $a->paymentTerms->sortBy('term_order')->values(),
+            ];
+        })->values()->all();
+
+        // ── Active assessment fee breakdown ───────────────────────────────────
         $feeBreakdown = null;
         if ($assessment) {
             $feeBreakdown = $this->computeTotal(
@@ -330,61 +384,108 @@ class StudentFeeController extends Controller
             );
         }
 
+        // ── Payments (Payment history table) ─────────────────────────────────
+        // Fetch from the payments table, joining assessment so the Vue can
+        // filter by assessment_id and display school_year / semester.
+        $payments = \App\Models\Payment::where('user_id', $userId)
+            ->with('assessment')
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn ($p) => [
+                'id'               => $p->id,
+                'assessment_id'    => $p->student_assessment_id,
+                'amount'           => (float) $p->amount,
+                'payment_method'   => $p->payment_method,
+                'reference_number' => $p->paymongo_payment_id
+                    ?? $p->meta['reference_number']
+                    ?? ('PAY-' . strtoupper(substr(md5($p->id . $p->created_at), 0, 8))),
+                'description'      => $p->description ?? 'Payment',
+                'status'           => $p->status,
+                'paid_at'          => $p->created_at?->toDateString(),
+                'school_year'      => $p->assessment?->school_year,
+                'semester'         => $p->assessment?->semester,
+            ])
+            ->all();
+
+        // ── Transactions (Ledger) ─────────────────────────────────────────────
+        // Only payment-kind transactions — charge rows belong in the assessment
+        // history view, not the ledger.
+        $transactions = Transaction::where('user_id', $userId)
+            ->where('kind', 'payment')
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn ($t) => [
+                'id'        => $t->id,
+                'kind'      => $t->kind,
+                'type'      => $t->type ?? ucfirst($t->kind),
+                'amount'    => (float) $t->amount,
+                'reference' => $t->reference,
+                'status'    => $t->status,
+                'year'      => $t->year,
+                'semester'  => $t->semester,
+                'meta'      => $t->meta,
+                'created_at'=> $t->created_at?->toDateTimeString(),
+            ])
+            ->all();
+
+        // ── Active assessment formatted for the main prop ─────────────────────
+        $activeAssessmentFormatted = $assessment ? [
+            'id'               => $assessment->id,
+            'course'           => $user->course,
+            'semester'         => $assessment->semester,
+            'school_year'      => $assessment->school_year,
+            'year_level'       => $user->year_level,
+            'lec_units'        => $assessment->lec_units,
+            'lab_units'        => $assessment->lab_units,
+            'total_assessment' => (float) $assessment->total_assessment,
+            'tuition_fee'      => $feeBreakdown['tuitionFee'] ?? 0,
+            'lab_fee'          => $feeBreakdown['labFee'] ?? 0,
+            'misc_fee'         => $feeBreakdown['miscFee'] ?? 0,
+            'other_fees'       => ($feeBreakdown['labFee'] ?? 0) + ($feeBreakdown['miscFee'] ?? 0),
+            'fee_breakdown'    => [
+                [
+                    'category' => 'Tuition',
+                    'name'     => 'Tuition Fee',
+                    'code'     => 'TUI',
+                    'units'    => $assessment->lec_units,
+                    'amount'   => $feeBreakdown['tuitionFee'] ?? 0,
+                ],
+                [
+                    'category' => 'Laboratory',
+                    'name'     => 'Laboratory Fee',
+                    'code'     => 'LAB',
+                    'units'    => $assessment->lab_units,
+                    'amount'   => $feeBreakdown['labFee'] ?? 0,
+                ],
+                [
+                    'category' => 'Miscellaneous',
+                    'name'     => 'Miscellaneous Fee',
+                    'code'     => 'MISC',
+                    'units'    => null,
+                    'amount'   => $feeBreakdown['miscFee'] ?? 0,
+                ],
+            ],
+            'status'       => $assessment->status,
+            'paymentTerms' => $assessment->paymentTerms->sortBy('term_order')->values(),
+        ] : null;
+
         return Inertia::render('StudentFees/Show', [
             'student' => [
                 'id'         => $user->id,
-                // ✅ FIXED: middle initial included
                 'name'       => $this->buildStudentName($user),
                 'account_id' => $user->account_id,
                 'course'     => $user->course,
                 'year_level' => $user->year_level,
                 'avatar'     => $user->avatar ?? null,
-                // ✅ FIXED: balance always non-negative
                 'account'    => $user->account
                     ? ['balance' => max(0, (float) $user->account->balance)]
                     : null,
             ],
-            'assessment' => $assessment ? [
-                'id'               => $assessment->id,
-                'course'           => $user->course,
-                'semester'         => $assessment->semester,
-                'school_year'      => $assessment->school_year,
-                'year_level'       => $user->year_level,
-                'total_assessment' => (float) $assessment->total_assessment,
-                'tuition_fee'      => $feeBreakdown['tuitionFee'] ?? 0,
-                'other_fees'       => ($feeBreakdown['labFee'] ?? 0) + ($feeBreakdown['miscFee'] ?? 0),
-                // ✅ FIXED: Correct labels — Tuition Fee / Laboratory Fee / Miscellaneous Fee
-                // ✅ FIXED: Miscellaneous has units = null (flat fee, not unit-based)
-                'fee_breakdown'    => [
-                    [
-                        'category' => 'Tuition',
-                        'name'     => 'Tuition Fee',
-                        'code'     => 'TUI',
-                        'units'    => $assessment->lec_units,
-                        'amount'   => $feeBreakdown['tuitionFee'] ?? 0,
-                    ],
-                    [
-                        'category' => 'Laboratory',
-                        'name'     => 'Laboratory Fee',
-                        'code'     => 'LAB',
-                        'units'    => $assessment->lab_units,
-                        'amount'   => $feeBreakdown['labFee'] ?? 0,
-                    ],
-                    [
-                        'category' => 'Miscellaneous',
-                        'name'     => 'Miscellaneous Fee',
-                        'code'     => 'MISC',
-                        'units'    => null,   // flat fee — no unit basis
-                        'amount'   => $feeBreakdown['miscFee'] ?? 0,
-                    ],
-                ],
-                'status'       => $assessment->status,
-                'paymentTerms' => $assessment->paymentTerms->sortBy('term_order')->values(),
-            ] : null,
-            'allAssessments'              => [],
-            'transactions'                => [],
-            'payments'                    => [],
-            'feeBreakdown'                => [
+            'assessment'     => $activeAssessmentFormatted,
+            'allAssessments' => $allAssessmentsFormatted,
+            'transactions'   => $transactions,
+            'payments'       => $payments,
+            'feeBreakdown'   => [
                 ['category' => 'Tuition',       'total' => $feeBreakdown['tuitionFee'] ?? 0, 'items' => 1],
                 ['category' => 'Laboratory',    'total' => $feeBreakdown['labFee'] ?? 0,     'items' => 1],
                 ['category' => 'Miscellaneous', 'total' => $feeBreakdown['miscFee'] ?? 0,    'items' => 1],

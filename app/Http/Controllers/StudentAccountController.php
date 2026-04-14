@@ -91,16 +91,16 @@ class StudentAccountController extends Controller
             ->orderBy('created_at', 'desc')
             ->get();
 
-        // totalPaid: sum of verified paid payments for the current assessment
+        // totalPaid: authoritative value derived from payment term balances.
+        // Using Transaction.amount sums is unreliable when a payment overflows
+        // across multiple terms — the Transaction records the full amount paid,
+        // but the term deductions may only apply to one term's balance if spillover
+        // is partial. The only authoritative source is: total_assessment − outstanding.
         $totalPaid = 0;
         if ($assessment) {
-            $totalPaid = (float) $transactions
-                ->where('status', PaymentStatus::PAID->value)
-                ->filter(function ($txn) use ($assessment) {
-                    $assessmentId = data_get($txn->meta, 'assessment_id');
-                    return $assessmentId === null || $assessmentId === $assessment->id;
-                })
-                ->sum('amount');
+            $totalAssessment = (float) $assessment->total_assessment;
+            $outstanding     = (float) $paymentTerms->sum('balance');
+            $totalPaid       = round(max(0, $totalAssessment - $outstanding), 2);
         }
 
         // Pending approval payments — shown as banners, block duplicate submissions
