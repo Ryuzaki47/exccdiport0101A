@@ -16,7 +16,7 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Tuition Rate
+    | Tuition Rate (Lecture Only)
     |--------------------------------------------------------------------------
     | Charged per lecture unit enrolled.
     | AY 2024-2025: ₱317.00  →  AY 2025-2026: ₱364.00 (+15%)
@@ -25,58 +25,42 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Laboratory Fee
+    | Laboratory Fees
     |--------------------------------------------------------------------------
     | Charged per laboratory unit enrolled.
     | AY 2024-2025: ₱1,440.00  →  AY 2025-2026: ₱1,656.00 (+15%)
+    |
+    | NOTE:
+    | - Entrepreneurship Fee (₱600) is ALWAYS applied when
+    |   there is at least 1 laboratory unit.
     */
-    'lab_fee_per_unit' => env('CCDI_LAB_FEE_PER_UNIT', 1656.00),
+    'lab' => [
+        'per_unit' => env('CCDI_LAB_FEE_PER_UNIT', 1656.00),
+        'entrepreneurship_fee' => 600.00,
+    ],
 
     /*
     |--------------------------------------------------------------------------
     | Miscellaneous Fees (Fixed Per Semester)
     |--------------------------------------------------------------------------
-    | Charged once per semester regardless of subject load.
-    | This is the sum of all line items in the misc fee schedule.
+    | Total is fixed at ₱4,700 per semester.
     |
-    | Breakdown:
-    |   Entrepreneurship Fee ₱600   ← was mislabeled "Registration Fee" before
-    |   LMS                  ₱450
-    |   Library Fee          ₱450
-    |   Athletic Fee         ₱550
-    |   PRISAA               ₱300
-    |   Publication Fee      ₱200
-    |   Audio-Visual Fee     ₱250
-    |   ID                   ₱300
-    |   Faculty Development  ₱250
-    |   Guidance Services    ₱225
-    |   Medical              ₱300
-    |   Insurance Fee        ₱100
-    |   Cultural Arts Fee    ₱175
-    |   Maintenance Fee      ₱400
-    |   ──────────────────────────
-    |   TOTAL                ₱4,700
-    |
-    | NOTE: Registration Fee = ₱0 (Free). It is displayed in the fee breakdown
-    | on the assessment form and PDF but adds nothing to the total.
-    |
-    | NOTE: Laboratory fee (₱1,656 per lab unit) is billed separately
-    | via lab_fee_per_unit above and is NOT included in this total.
+    | NOTE:
+    | - Miscellaneous fees are NOT unit-based
+    | - Always applied regardless of lecture/lab units
+    | - Do NOT recompute total from items
     */
     'misc_fee_fixed' => env('CCDI_MISC_FEE', 4700.00),
 
     /*
     |--------------------------------------------------------------------------
-    | Miscellaneous Fee Line Items (for display only)
+    | Miscellaneous Fee Breakdown (Display Only)
     |--------------------------------------------------------------------------
-    | Used by the assessment form and PDF to render the itemized misc breakdown.
-    | These do NOT affect the total — misc_fee_fixed above is authoritative.
-    | Amounts here are informational only. Registration Fee is listed as 0
-    | because it is free (no charge to the student).
+    | This is used for UI/PDF display only.
+    | Must match the fixed total above (₱4,700).
     */
     'misc_items' => [
-        ['label' => 'Registration Fee',    'amount' => 0.00],
-        ['label' => 'Entrepreneurship Fee','amount' => 600.00],
+        ['label' => 'Registration Fee',    'amount' => 600.00],
         ['label' => 'LMS',                 'amount' => 450.00],
         ['label' => 'Library Fee',         'amount' => 450.00],
         ['label' => 'Athletic Fee',        'amount' => 550.00],
@@ -98,9 +82,6 @@ return [
     |--------------------------------------------------------------------------
     | How the total assessment is split into payment terms.
     | Percentages must sum to 100.
-    |
-    | term_name   → label shown to student/accounting
-    | percentage  → portion of total due at that term (0–100)
     */
     'payment_terms' => [
         ['term_name' => 'Upon Registration', 'term_order' => 1, 'percentage' => 25],

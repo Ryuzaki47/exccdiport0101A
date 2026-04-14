@@ -17,7 +17,6 @@ class StudentAssessment extends Model
         'school_year',
         'lec_units',
         'lab_units',
-        'lab_subjects',
         'total_assessment',
         'status',
     ];
@@ -25,7 +24,6 @@ class StudentAssessment extends Model
     protected $casts = [
         'lec_units'        => 'integer',
         'lab_units'        => 'integer',
-        'lab_subjects'     => 'integer',
         'total_assessment' => 'decimal:2',
     ];
 
@@ -56,7 +54,7 @@ class StudentAssessment extends Model
 
     public function getLabFeeAttribute(): float
     {
-        return $this->lab_subjects * (float) config('fees.lab_fee_per_subject', 1656.00);
+        return $this->lab_units * (float) config('fees.lab_fee_per_unit', 1656.00);
     }
 
     public function getMiscFeeAttribute(): float

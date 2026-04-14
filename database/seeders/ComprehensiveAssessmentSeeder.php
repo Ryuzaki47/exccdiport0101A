@@ -16,14 +16,28 @@ use App\Models\User;
 /**
  * ComprehensiveAssessmentSeeder
  *
- * Each assessment uses a SINGLE flat "Tuition Fee" line equal to the
- * course-specific total for that year level and semester.
+ * Creates one assessment per active student per semester (1st Sem + 2nd Sem).
  *
- * "Academic" category removed — the single fee uses category "Tuition".
+ * Fee formula (from config/fees.php — single source of truth):
+ *   Tuition  = lec_units  × config('fees.tuition_per_lec_unit')   [₱364.00]
+ *   Lab Fee  = lab_subjects × config('fees.lab_fee_per_unit')      [₱1,656.00]
+ *   Misc Fee = config('fees.misc_fee_fixed')                       [₱4,700.00]
+ *   ─────────────────────────────────────────────────────────────────
+ *   Total    = tuition + lab_fee + misc_fee
  *
- * Payment terms: 5 per assessment
- *   Upon Registration 42.15% | Prelim 17.86% | Midterm 17.86%
- *   Semi-Final 14.88% | Final 7.25%
+ * Unit map per year level (semester-agnostic for 2nd Sem seeding):
+ *   1st Year → 18 lec_units, 3 lab_subjects, 3 lab_units (informational)
+ *   2nd Year → 18 lec_units, 3 lab_subjects, 3 lab_units
+ *   3rd Year → 15 lec_units, 2 lab_subjects, 2 lab_units
+ *   4th Year → 12 lec_units, 1 lab_subject,  1 lab_unit
+ *
+ * NOTE: No charge Transactions are created here.
+ * Charges are only generated when accounting staff creates an assessment
+ * via StudentFeeController::store(). Seeder = structural/test data only.
+ *
+ * Payment terms split (from config('fees.payment_terms')):
+ *   Upon Registration 25% | Prelim 25% | Midterm 25%
+ *   Semi-Final 12.5%      | Final  12.5%
  */
 class ComprehensiveAssessmentSeeder extends Seeder
 {
@@ -31,71 +45,16 @@ class ComprehensiveAssessmentSeeder extends Seeder
 
     private string $schoolYear = '2025-2026';
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Course-specific flat tuition totals per year level × semester
-    // shape: course → yearLevel → semester → total amount (float)
-    //
-    // BSEET amounts provided:  1Y1S=18,400 | 1Y2S=16,000 | 2Y1S=17,600
-    // Remaining marked TODO — update these with real values.
-    // ─────────────────────────────────────────────────────────────────────────
-    private array $courseTotals = [
-        'Associate in Computer Technology - Multimedia/Animation' => [
-            '1st Year' => ['2nd Sem' => 17220.00],
-            '2nd Year' => ['2nd Sem' => 14108.00],
-        ],
-        'Associate in Computer Technology - Networking' => [
-            '1st Year' => ['2nd Sem' => 17220.00],
-            '2nd Year' => ['2nd Sem' => 16492.00],
-        ],
-        'Associate in Computer Technology - Programming' => [
-            '1st Year' => ['2nd Sem' => 17220.00],
-            '2nd Year' => ['2nd Sem' => 16492.00],
-        ],
-        'BET Electrical Engineering Technology' => [
-            '1st Year' => ['2nd Sem' => 12088.00],
-        ],
-        'BET Electronics Engineering Technology' => [
-            '1st Year' => ['2nd Sem' => 17584.00],
-        ],
-        'BS Computer Science' => [
-            '1st Year' => ['2nd Sem' => 17220.00],
-            '2nd Year' => ['2nd Sem' => 14836.00],
-            '3rd Year' => ['2nd Sem' => 14836.00],
-        ],
-        'BS Information Systems' => [
-            '1st Year' => ['2nd Sem' => 17220.00],
-            '2nd Year' => ['2nd Sem' => 12452.00],
-            '3rd Year' => ['2nd Sem' => 12452.00],
-        ],
-        'BS Information Technology' => [
-            '1st Year' => ['2nd Sem' => 16856.00],
-            '2nd Year' => ['2nd Sem' => 16856.00],
-            '3rd Year' => ['2nd Sem' => 12452.00],
-        ],
-        'Diploma in Electronics and Computer Technology' => [
-            '1st Year' => ['2nd Sem' => 19240.00],
-        ],
-        'Diploma in Software Development and Programming' => [
-            '1st Year' => ['2nd Sem' => 19240.00],
-        ],
-    ];
-
     /**
-     * Fallback used when a student's course has no entry in $courseTotals.
+     * Unit configuration per year level.
+     * lec_units → drives tuition fee formula (₱364 per unit)
+     * lab_units → drives lab fee formula (₱1,656 per unit)
      */
-    private array $fallbackTotals = [
-        '1st Year' => ['1st Sem' => 17000.00, '2nd Sem' => 15500.00],
-        '2nd Year' => ['1st Sem' => 17500.00, '2nd Sem' => 16000.00],
-        '3rd Year' => ['1st Sem' => 18500.00, '2nd Sem' => 17000.00],
-        '4th Year' => ['1st Sem' => 19500.00, '2nd Sem' => 18500.00],
-    ];
-
-    private array $termDefinitions = [
-        1 => ['name' => 'Upon Registration', 'percentage' => 42.15],
-        2 => ['name' => 'Prelim',            'percentage' => 17.86],
-        3 => ['name' => 'Midterm',           'percentage' => 17.86],
-        4 => ['name' => 'Semi-Final',        'percentage' => 14.88],
-        5 => ['name' => 'Final',             'percentage' =>  7.25],
+    private array $unitMap = [
+        '1st Year' => ['lec_units' => 18, 'lab_units' => 3],
+        '2nd Year' => ['lec_units' => 18, 'lab_units' => 3],
+        '3rd Year' => ['lec_units' => 15, 'lab_units' => 2],
+        '4th Year' => ['lec_units' => 12, 'lab_units' => 1],
     ];
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -104,48 +63,68 @@ class ComprehensiveAssessmentSeeder extends Seeder
     {
         $adminId = $this->getOrFindAdminUserId();
 
-        $this->command->info('🗑️  Clearing existing assessments, payment terms, charge transactions…');
+        $this->command->info('🗑️  Clearing existing assessments and payment terms…');
         $studentIds = User::where('role', 'student')->pluck('id');
-        
-        // Delete payment terms through their assessment relationship
+
         StudentPaymentTerm::whereIn(
             'student_assessment_id',
             StudentAssessment::whereIn('user_id', $studentIds)->pluck('id')
         )->delete();
-        
+
         StudentAssessment::whereIn('user_id', $studentIds)->delete();
-        Transaction::whereIn('user_id', $studentIds)->where('kind', 'charge')->delete();
         $this->command->info('✓ Cleared.');
         $this->command->newLine();
 
-        // Seed fees table with one row per course × year × semester
-        $this->command->info('💰 Seeding Fees table (single flat Tuition Fee per course/year/sem)…');
-        Fee::query()->delete();
-        $this->seedFeesTable();
-        $this->command->info('✓ Fees seeded: ' . Fee::count() . ' records.');
+        // Pull fee rates from config — single source of truth
+        $tuitionRate  = (float) config('fees.tuition_per_lec_unit', 364.00);
+        $labRate      = (float) config('fees.lab_fee_per_unit', 1656.00);
+        $miscFee      = (float) config('fees.misc_fee_fixed', 4700.00);
+        $termDefs     = config('fees.payment_terms', $this->defaultTerms());
+
+        $this->command->info("💰 Fee rates loaded from config:");
+        $this->command->info("   Tuition per lec unit: ₱" . number_format($tuitionRate, 2));
+        $this->command->info("   Lab fee per subject:  ₱" . number_format($labRate, 2));
+        $this->command->info("   Misc fee (fixed):     ₱" . number_format($miscFee, 2));
         $this->command->newLine();
 
         $students  = User::where('role', 'student')
             ->where('status', User::STATUS_ACTIVE)
             ->whereNotNull('year_level')
             ->get();
+
         $semesters = ['1st Sem', '2nd Sem'];
 
-        $this->command->info("📋 Creating assessments for {$students->count()} students (excluding graduated)…");
+        $this->command->info("📋 Creating assessments for {$students->count()} active students…");
         $created = 0;
         $skipped = 0;
 
-        DB::transaction(function () use ($students, $semesters, $adminId, &$created, &$skipped) {
+        DB::transaction(function () use ($students, $semesters, $tuitionRate, $labRate, $miscFee, $termDefs, &$created, &$skipped) {
             foreach ($students as $student) {
-                if (empty($student->year_level)) { $skipped++; continue; }
+                if (empty($student->year_level)) {
+                    $skipped++;
+                    continue;
+                }
 
-                $totals = $this->courseTotals[$student->course ?? ''] ?? $this->fallbackTotals;
+                $units = $this->unitMap[$student->year_level] ?? null;
+                if ($units === null) {
+                    $this->command->warn("  ⚠ Unknown year level '{$student->year_level}' for student {$student->email} — skipped.");
+                    $skipped++;
+                    continue;
+                }
+
+                // Calculate total using the real formula
+                $tuition      = round($units['lec_units'] * $tuitionRate, 2);
+                $labFee       = round($units['lab_units'] * $labRate, 2);
+                $grandTotal   = round($tuition + $labFee + $miscFee, 2);
 
                 foreach ($semesters as $semester) {
-                    $amount = $totals[$student->year_level][$semester] ?? null;
-                    if ($amount === null) { $skipped++; continue; }
-
-                    $this->createStudentAssessment($student, $semester, $adminId, (float) $amount);
+                    $this->createAssessment(
+                        student:    $student,
+                        semester:   $semester,
+                        units:      $units,
+                        grandTotal: $grandTotal,
+                        termDefs:   $termDefs,
+                    );
                     $created++;
                 }
             }
@@ -157,137 +136,63 @@ class ComprehensiveAssessmentSeeder extends Seeder
         $this->command->table(
             ['Item', 'Count'],
             [
-                ['Fee Records',         Fee::count()],
-                ['Assessments',         StudentAssessment::count()],
-                ['Payment Terms',       StudentPaymentTerm::count()],
-                ['Charge Transactions', Transaction::whereIn('user_id', $studentIds)
-                                            ->where('kind', 'charge')->count()],
+                ['Assessments',   StudentAssessment::count()],
+                ['Payment Terms', StudentPaymentTerm::count()],
             ]
         );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Seed fees table — one flat "Tuition Fee" row per course × year × semester
-    // ─────────────────────────────────────────────────────────────────────────
 
-    private function seedFeesTable(): void
-    {
-        $allCourses = array_merge(
-            $this->courseTotals,
-            ['_fallback' => $this->fallbackTotals]
-        );
-
-        foreach ($this->courseTotals as $course => $yearLevels) {
-            foreach ($yearLevels as $yearLevel => $semesters) {
-                foreach ($semesters as $semester => $amount) {
-                    $courseSlug = strtoupper(substr(preg_replace('/[^A-Za-z]/', '', $course), 0, 4));
-                    $yrNum      = preg_replace('/[^0-9]/', '', $yearLevel);
-                    $semNum     = preg_replace('/[^0-9]/', '', $semester);
-                    $code       = "TUI-{$courseSlug}-Y{$yrNum}S{$semNum}";
-
-                    Fee::firstOrCreate(['code' => $code], [
-                        'name'        => 'Tuition Fee',
-                        'category'    => 'Tuition',
-                        'amount'      => $amount,
-                        'year_level'  => $yearLevel,
-                        'semester'    => $semester,
-                        'school_year' => $this->schoolYear,
-                        'description' => "Tuition Fee — {$yearLevel} {$semester} ({$course})",
-                        'is_active'   => true,
-                    ]);
-                }
-            }
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Create one full assessment for a student + semester
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private function createStudentAssessment(
+    private function createAssessment(
         User   $student,
         string $semester,
-        int    $adminId,
-        float  $tuitionTotal
+        array  $units,
+        float  $grandTotal,
+        array  $termDefs,
     ): void {
-        $yearLevel    = $student->year_level;
-        $grandTotal   = round($tuitionTotal, 2);
-
-        // Calculate units based on year level
-        // 1st year: 48 LEC, 4 LAB | 2nd year: 48 LEC, 3 LAB | 3rd year: 45 LEC, 2 LAB | 4th year: 42 LEC, 2 LAB
-        $unitMap = [
-            '1st Year' => ['lec' => 48, 'lab' => 4],
-            '2nd Year' => ['lec' => 48, 'lab' => 3],
-            '3rd Year' => ['lec' => 45, 'lab' => 2],
-            '4th Year' => ['lec' => 42, 'lab' => 2],
-        ];
-        $units = $unitMap[$yearLevel] ?? ['lec' => 48, 'lab' => 3];
-
         $assessment = StudentAssessment::create([
             'user_id'           => $student->id,
             'assessment_number' => StudentAssessment::generateAssessmentNumber(),
-            'year_level'        => $yearLevel,
+            'year_level'        => $student->year_level,
             'semester'          => $semester,
             'school_year'       => $this->schoolYear,
-            'lec_units'         => $units['lec'],
-            'lab_units'         => $units['lab'],
+            'lec_units'         => $units['lec_units'],
+            'lab_units'         => $units['lab_units'],
             'total_assessment'  => $grandTotal,
             'status'            => 'active',
         ]);
 
-        // DISABLED: Do not create charge transactions during seeding
-        // Charges should only be created when admin explicitly creates an assessment
-        // via the StudentFeeController::store() endpoint, not automatically during seed.
-        /*
-        // Single charge transaction per assessment
-        $yearNum = (int) explode('-', $this->schoolYear)[0];
-        Transaction::create([
-            'user_id'   => $student->id,
-            'reference' => 'ASMT-' . strtoupper(Str::random(8)),
-            'kind'      => 'charge',
-            'type'      => 'Tuition',
-            'year'      => $yearNum,
-            'semester'  => $semester,
-            'amount'    => $grandTotal,
-            'status'    => 'pending',
-            'meta'      => [
-                'assessment_id'   => $assessment->id,
-                'assessment_type' => 'regular',
-                'description'     => "Tuition Fee — {$yearLevel} {$semester} {$this->schoolYear}",
-            ],
-        ]);
-        */
-
-        // 5 payment terms
-        $semStart = ($semester === '1st Sem')
+        // Due date anchors per semester
+        $semStart = $semester === '1st Sem'
             ? Carbon::create(2025, 8, 1)
             : Carbon::create(2026, 1, 5);
 
-        $dueDates = [
-            1 => $semStart->copy(),
-            2 => $semStart->copy()->addWeeks(6),
-            3 => $semStart->copy()->addWeeks(12),
-            4 => $semStart->copy()->addWeeks(16),
-            5 => $semStart->copy()->addWeeks(19),
-        ];
-
         $allocated = 0.00;
-        foreach ($this->termDefinitions as $order => $term) {
-            $isLast = ($order === 5);
+        $lastIndex = count($termDefs) - 1;
+
+        foreach ($termDefs as $i => $term) {
+            $isLast = ($i === $lastIndex);
+
+            // Last term absorbs any rounding remainder so sum equals grand total exactly
             $amount = $isLast
                 ? round($grandTotal - $allocated, 2)
                 : round(($term['percentage'] / 100) * $grandTotal, 2);
 
-            if (!$isLast) $allocated += $amount;
+            if (! $isLast) {
+                $allocated += $amount;
+            }
+
+            $dueDate = $semStart->copy()->addWeeks($i * 4)->toDateString();
 
             StudentPaymentTerm::create([
                 'student_assessment_id'  => $assessment->id,
-                'term_name'              => $term['name'],
-                'term_order'             => $order,
+                'term_name'              => $term['term_name'],
+                'term_order'             => $term['term_order'],
                 'percentage'             => $term['percentage'],
                 'amount'                 => $amount,
-                'balance'                => $amount,
-                'due_date'               => $dueDates[$order]->toDateString(),
+                'balance'                => $amount, // All start unpaid
+                'due_date'               => $dueDate,
                 'status'                 => StudentPaymentTerm::STATUS_PENDING,
                 'remarks'                => null,
                 'paid_date'              => null,
@@ -295,5 +200,20 @@ class ComprehensiveAssessmentSeeder extends Seeder
                 'carryover_amount'       => 0.00,
             ]);
         }
+    }
+
+    /**
+     * Fallback term definitions if config/fees.php payment_terms is missing.
+     * Kept in sync with the constant in StudentPaymentTerm.
+     */
+    private function defaultTerms(): array
+    {
+        return [
+            ['term_name' => 'Upon Registration', 'term_order' => 1, 'percentage' => 25.00],
+            ['term_name' => 'Prelim',            'term_order' => 2, 'percentage' => 25.00],
+            ['term_name' => 'Midterm',           'term_order' => 3, 'percentage' => 25.00],
+            ['term_name' => 'Semi-Final',        'term_order' => 4, 'percentage' => 12.50],
+            ['term_name' => 'Final',             'term_order' => 5, 'percentage' => 12.50],
+        ];
     }
 }

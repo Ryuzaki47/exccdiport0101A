@@ -72,7 +72,7 @@ class TransactionController extends Controller
                 ->where('status', '!=', 'cancelled')
                 ->orderByDesc('created_at')
                 // FIX #5: 'fee_breakdown' is not a real column. Build it from stored units.
-                ->get(['id', 'school_year', 'semester', 'year_level', 'lec_units', 'lab_units', 'lab_subjects', 'total_assessment'])
+                ->get(['id', 'school_year', 'semester', 'year_level', 'lec_units', 'lab_units', 'total_assessment'])
                 ->map(fn ($a) => [
                     'id'               => $a->id,
                     'school_year'      => $a->school_year,
@@ -89,9 +89,9 @@ class TransactionController extends Controller
                         ],
                         [
                             'category' => 'Laboratory',
-                            'name'     => 'Laboratory Subjects',
-                            'units'    => $a->lab_subjects,
-                            'amount'   => $a->lab_subjects * (float) config('fees.lab_fee_per_subject', 1656.00),
+                            'name'     => 'Laboratory Units',
+                            'units'    => $a->lab_units,
+                            'amount'   => $a->lab_units * (float) config('fees.lab_fee_per_unit', 1656.00),
                         ],
                         [
                             'category' => 'Miscellaneous',

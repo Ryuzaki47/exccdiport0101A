@@ -280,15 +280,15 @@ const totalMiscellaneous = computed(() => {
 // Fee calculation summary showing the formula (e.g., "28.5 units × ₱364 + 5 labs × ₱1,656 + ₱6,956")
 const feeCalculationSummary = computed(() => {
     const totalUnits = tuitionItems.value.reduce((sum: number, item: any) => sum + (item.units || 0), 0);
-    const labCount = labItems.value.length;
+    const labCount = labItems.value.reduce((sum: number, item: any) => sum + (item.units || 0), 0);
     const tuitionPerUnit = config('fees.tuition_per_unit', 364.0);
     const labPerSubject = config('fees.lab_fee_per_subject', 1656.0);
 
     if (totalUnits <= 0) return '';
 
     const parts = [];
-    if (totalUnits > 0) parts.push(`${totalUnits} LEC unit${totalUnits !== 1 ? 's' : ''} × ₱${tuitionPerUnit.toFixed(2)}`);
-    if (labCount > 0) parts.push(`${labCount} LAB unit${labCount !== 1 ? 's' : ''} × ₱${labPerSubject.toFixed(2)}`);
+    if (totalUnits > 0) parts.push(`${totalUnits.toFixed(1)} LEC unit${totalUnits !== 1 ? 's' : ''} × ₱${tuitionPerUnit.toFixed(2)}`);
+    if (labCount > 0) parts.push(`${labCount.toFixed(1)} LAB unit${labCount !== 1 ? 's' : ''} × ₱${labPerSubject.toFixed(2)}`);
     if (totalMiscellaneous.value > 0) parts.push(`₱${totalMiscellaneous.value.toFixed(2)} misc`);
 
     return parts.length > 0 ? parts.join(' + ') : '—';

@@ -209,9 +209,12 @@ class StudentFeeController extends Controller
             'user_id'     => ['required', 'exists:users,id'],
             'semester'    => ['required', 'in:1st,2nd,Summer'],
             'school_year' => ['required', 'string', 'max:20'],
-            'lec_units'   => ['required', 'integer', 'min:0', 'max:30'],
+            'lec_units'   => ['required', 'numeric', 'min:0', 'max:30'],
             'lab_units'   => ['required', 'integer', 'min:0', 'max:10'],
         ]);
+        
+        // Cast lec_units to integer (handles 18.0 → 18)
+        $validated['lec_units'] = (int) $validated['lec_units'];
 
         try {
             DB::transaction(function () use ($validated) {
@@ -476,6 +479,10 @@ class StudentFeeController extends Controller
                 'account_id' => $user->account_id,
                 'course'     => $user->course,
                 'year_level' => $user->year_level,
+                'email'      => $user->email,
+                'birthday'   => $user->birthday,
+                'phone'      => $user->phone,
+                'status'     => $user->status,
                 'avatar'     => $user->avatar ?? null,
                 'account'    => $user->account
                     ? ['balance' => max(0, (float) $user->account->balance)]
@@ -566,9 +573,12 @@ class StudentFeeController extends Controller
         $validated = $request->validate([
             'semester'    => ['required', 'in:1st,2nd,Summer'],
             'school_year' => ['required', 'string', 'max:20'],
-            'lec_units'   => ['required', 'integer', 'min:0', 'max:30'],
+            'lec_units'   => ['required', 'numeric', 'min:0', 'max:30'],
             'lab_units'   => ['required', 'integer', 'min:0', 'max:10'],
         ]);
+
+        // Cast lec_units to integer (handles 18.0 → 18)
+        $validated['lec_units'] = (int) $validated['lec_units'];
 
         $assessment = StudentAssessment::where('user_id', $userId)
             ->where('status', 'active')
