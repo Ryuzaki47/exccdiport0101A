@@ -41,14 +41,38 @@ class StudentAccountController extends Controller
                     'year_level'        => $a->year_level,
                     'semester'          => $a->semester,
                     'school_year'       => $a->school_year,
-                    'course'            => $a->course,
+                    'course'            => $a->course ?? null,
                     'total_assessment'  => (float) $a->total_assessment,
                     'tuition_fee'       => (float) $feeBreakdown['tuitionFee'],
                     'other_fees'        => (float) ($feeBreakdown['labFee'] + $feeBreakdown['miscFee']),
+
+                    // ── Fee Breakdown ───────────────────────────────────────
+                    // Labels: Tuition Fee / Laboratory Fee / Miscellaneous Fee
+                    // Miscellaneous Fee is a FLAT fee — no unit basis.
+                    // 'units' is intentionally null for Miscellaneous so the
+                    // AccountOverview table can hide the Units column for that row.
                     'fee_breakdown'     => [
-                        ['category' => 'Tuition',       'name' => 'Lecture Units',     'code' => 'TUI', 'units' => $a->lec_units, 'amount' => $feeBreakdown['tuitionFee']],
-                        ['category' => 'Laboratory',    'name' => 'Laboratory Units',  'code' => 'LAB', 'units' => $a->lab_units, 'amount' => $feeBreakdown['labFee']],
-                        ['category' => 'Miscellaneous', 'name' => 'Registration Fee',  'code' => 'REG', 'units' => 1,             'amount' => $feeBreakdown['miscFee']],
+                        [
+                            'category' => 'Tuition',
+                            'name'     => 'Tuition Fee',
+                            'code'     => 'TUI',
+                            'units'    => $a->lec_units,
+                            'amount'   => $feeBreakdown['tuitionFee'],
+                        ],
+                        [
+                            'category' => 'Laboratory',
+                            'name'     => 'Laboratory Fee',
+                            'code'     => 'LAB',
+                            'units'    => $a->lab_units,
+                            'amount'   => $feeBreakdown['labFee'],
+                        ],
+                        [
+                            'category' => 'Miscellaneous',
+                            'name'     => 'Miscellaneous Fee',
+                            'code'     => 'MISC',
+                            'units'    => null,   // flat fee — no unit basis
+                            'amount'   => $feeBreakdown['miscFee'],
+                        ],
                     ],
                     'status'     => $a->status,
                     'created_at' => $a->created_at,
@@ -74,7 +98,6 @@ class StudentAccountController extends Controller
                 ->where('status', PaymentStatus::PAID->value)
                 ->filter(function ($txn) use ($assessment) {
                     $assessmentId = data_get($txn->meta, 'assessment_id');
-                    // Include if explicitly linked to this assessment OR if no link (older records)
                     return $assessmentId === null || $assessmentId === $assessment->id;
                 })
                 ->sum('amount');
@@ -122,16 +145,25 @@ class StudentAccountController extends Controller
         }
 
         return Inertia::render('Student/AccountOverview', [
-            'account'                       => $account,
-            'transactions'                  => $transactions->values(),
-            'totalPaid'                     => $totalPaid,
-            'fees'                          => [],
-            'latestAssessment'              => $assessment,
-            'allAssessments'                => $allAssessments,
-            'paymentTerms'                  => $paymentTerms->values(),
-            'notifications'                 => $notifications->values(),
-            'pendingApprovalPayments'       => $pendingApprovalPayments,
-            'enrolledSubjectsByAssessment'  => $enrolledSubjectsByAssessment,
+            'account'                      => $account,
+            'transactions'                 => $transactions->values(),
+            'totalPaid'                    => $totalPaid,
+            'fees'                         => [],
+            'latestAssessment'             => $assessment ? array_merge(
+                $assessment->toArray(),
+                [
+                    // Pass student enrollment/irregular status alongside assessment
+                    // is_irregular lives on users, not student_assessments
+                    'is_irregular'   => (bool) $user->is_irregular,
+                    'middle_initial' => $user->middle_initial,
+                    'student_name'   => $user->name,
+                ]
+            ) : null,
+            'allAssessments'               => $allAssessments,
+            'paymentTerms'                 => $paymentTerms->values(),
+            'notifications'                => $notifications->values(),
+            'pendingApprovalPayments'      => $pendingApprovalPayments,
+            'enrolledSubjectsByAssessment' => $enrolledSubjectsByAssessment,
         ]);
     }
 

@@ -66,6 +66,16 @@ class StudentFeeController extends Controller
         return $terms;
     }
 
+    /**
+     * Build the student's display name including middle initial.
+     * Format: "Last Name, First Name M."
+     */
+    private function buildStudentName(User $user): string
+    {
+        $mi   = $user->middle_initial ? ' ' . strtoupper($user->middle_initial) . '.' : '';
+        return $user->last_name . ', ' . $user->first_name . $mi;
+    }
+
     // ─────────────────────────────────────────────────────────────
     //  INDEX
     // ─────────────────────────────────────────────────────────────
@@ -102,12 +112,14 @@ class StudentFeeController extends Controller
         $students = $query->paginate(20)->through(fn ($u) => [
             'id'                => $u->id,
             'account_id'        => $u->account_id,
-            'name'              => $u->last_name . ', ' . $u->first_name,
+            // ✅ FIXED: middle initial included in all name constructions
+            'name'              => $this->buildStudentName($u),
             'course'            => $u->course,
             'year_level'        => $u->year_level,
             'status'            => $u->student?->enrollment_status ?? 'pending',
-            'remaining_balance' => $u->account?->balance ?? 0,
-            'account'           => $u->account ? ['balance' => $u->account->balance] : null,
+            // ✅ FIXED: balance always non-negative
+            'remaining_balance' => max(0, (float) ($u->account?->balance ?? 0)),
+            'account'           => $u->account ? ['balance' => max(0, (float) $u->account->balance)] : null,
             'latestAssessment'  => $u->latestAssessment ? [
                 'id'               => $u->latestAssessment->id,
                 'total_assessment' => $u->latestAssessment->total_assessment,
@@ -116,7 +128,7 @@ class StudentFeeController extends Controller
                     'term_name'  => $t->term_name,
                     'term_order' => $t->term_order,
                     'amount'     => $t->amount,
-                    'balance'    => $t->balance,
+                    'balance'    => max(0, (float) $t->balance),
                     'status'     => $t->status,
                     'due_date'   => $t->due_date,
                 ])->values()->all(),
@@ -160,7 +172,8 @@ class StudentFeeController extends Controller
             if ($student) {
                 $preselectedStudent = [
                     'id'         => $student->id,
-                    'name'       => $student->last_name . ', ' . $student->first_name,
+                    // ✅ FIXED: middle initial included
+                    'name'       => $this->buildStudentName($student),
                     'account_id' => $student->account_id,
                     'course'     => $student->course,
                     'year_level' => $student->year_level,
@@ -185,10 +198,9 @@ class StudentFeeController extends Controller
     // ─────────────────────────────────────────────────────────────
     //  STORE
     //
-    //  FIX: generateAssessmentNumber() is now called INSIDE the
-    //  lockForUpdate transaction so it sees the fully-committed state
-    //  of the table including any just-archived rows. The model's
-    //  generator now uses DB MAX() instead of ORDER BY string sort.
+    //  DUPLICATE GUARD: lockForUpdate() + RuntimeException ensures
+    //  no two concurrent requests can create assessments for the same
+    //  student / semester / school_year combination.
     // ─────────────────────────────────────────────────────────────
 
     public function store(Request $request)
@@ -321,11 +333,16 @@ class StudentFeeController extends Controller
         return Inertia::render('StudentFees/Show', [
             'student' => [
                 'id'         => $user->id,
-                'name'       => $user->last_name . ', ' . $user->first_name,
+                // ✅ FIXED: middle initial included
+                'name'       => $this->buildStudentName($user),
                 'account_id' => $user->account_id,
                 'course'     => $user->course,
                 'year_level' => $user->year_level,
-                'avatar'     => $user->avatar,
+                'avatar'     => $user->avatar ?? null,
+                // ✅ FIXED: balance always non-negative
+                'account'    => $user->account
+                    ? ['balance' => max(0, (float) $user->account->balance)]
+                    : null,
             ],
             'assessment' => $assessment ? [
                 'id'               => $assessment->id,
@@ -336,34 +353,29 @@ class StudentFeeController extends Controller
                 'total_assessment' => (float) $assessment->total_assessment,
                 'tuition_fee'      => $feeBreakdown['tuitionFee'] ?? 0,
                 'other_fees'       => ($feeBreakdown['labFee'] ?? 0) + ($feeBreakdown['miscFee'] ?? 0),
+                // ✅ FIXED: Correct labels — Tuition Fee / Laboratory Fee / Miscellaneous Fee
+                // ✅ FIXED: Miscellaneous has units = null (flat fee, not unit-based)
                 'fee_breakdown'    => [
                     [
                         'category' => 'Tuition',
-                        'name'     => 'Lecture Units',
+                        'name'     => 'Tuition Fee',
                         'code'     => 'TUI',
                         'units'    => $assessment->lec_units,
                         'amount'   => $feeBreakdown['tuitionFee'] ?? 0,
                     ],
                     [
                         'category' => 'Laboratory',
-                        'name'     => 'Laboratory Units',
+                        'name'     => 'Laboratory Fee',
                         'code'     => 'LAB',
                         'units'    => $assessment->lab_units,
                         'amount'   => $feeBreakdown['labFee'] ?? 0,
                     ],
                     [
                         'category' => 'Miscellaneous',
-                        'name'     => 'Miscellaneous Fees',
+                        'name'     => 'Miscellaneous Fee',
                         'code'     => 'MISC',
-                        'units'    => 1,
+                        'units'    => null,   // flat fee — no unit basis
                         'amount'   => $feeBreakdown['miscFee'] ?? 0,
-                    ],
-                    [
-                        'category' => 'Registration',
-                        'name'     => 'Registration Fee',
-                        'code'     => 'REG',
-                        'units'    => 1,
-                        'amount'   => 0.00,
                     ],
                 ],
                 'status'       => $assessment->status,
@@ -376,7 +388,6 @@ class StudentFeeController extends Controller
                 ['category' => 'Tuition',       'total' => $feeBreakdown['tuitionFee'] ?? 0, 'items' => 1],
                 ['category' => 'Laboratory',    'total' => $feeBreakdown['labFee'] ?? 0,     'items' => 1],
                 ['category' => 'Miscellaneous', 'total' => $feeBreakdown['miscFee'] ?? 0,    'items' => 1],
-                ['category' => 'Registration',  'total' => 0.00,                              'items' => 1],
             ],
             'miscItems'                   => config('fees.misc_items', []),
             'backUrl'                     => route('student-fees.index'),
@@ -387,16 +398,11 @@ class StudentFeeController extends Controller
     // ─────────────────────────────────────────────────────────────
     //  EDIT
     //
-    //  FIX: Added explicit admin-only guard. Even though the route
-    //  is now accessible to accounting (to prevent 404), only admins
-    //  can actually load the edit form. Accounting gets a redirect.
+    //  FIX: Admin-only guard. Accounting gets a redirect to show.
     // ─────────────────────────────────────────────────────────────
 
     public function edit(int $userId): Response
     {
-        // Enforce admin-only at the controller level as a second gate.
-        // The route is reachable by accounting to avoid the 404/redirect
-        // loop, but only admins can proceed past this point.
         $authUser = auth()->user();
         $authRole = $authUser->role instanceof \App\Enums\UserRoleEnum
             ? $authUser->role->value
@@ -425,7 +431,8 @@ class StudentFeeController extends Controller
         return Inertia::render('StudentFees/Edit', [
             'student' => [
                 'id'         => $user->id,
-                'name'       => $user->last_name . ', ' . $user->first_name,
+                // ✅ FIXED: middle initial included
+                'name'       => $this->buildStudentName($user),
                 'account_id' => $user->account_id,
                 'course'     => $user->course,
                 'year_level' => $user->year_level,
@@ -529,12 +536,13 @@ class StudentFeeController extends Controller
                       ->orWhere('account_id', 'like', "%{$q}%");
             })
             ->where('is_active', true)
-            ->select('id', 'last_name', 'first_name', 'account_id', 'course', 'year_level')
+            ->select('id', 'last_name', 'first_name', 'middle_initial', 'account_id', 'course', 'year_level')
             ->limit(10)
             ->get()
             ->map(fn ($u) => [
                 'id'         => $u->id,
-                'name'       => $u->last_name . ', ' . $u->first_name,
+                // ✅ FIXED: middle initial included
+                'name'       => $this->buildStudentName($u),
                 'account_id' => $u->account_id,
                 'course'     => $u->course,
                 'year_level' => $u->year_level,
@@ -569,10 +577,9 @@ class StudentFeeController extends Controller
         $fees = $this->computeTotal($assessment->lec_units, $assessment->lab_units);
 
         $assessment->fee_breakdown = [
-            ['category' => 'Tuition',       'name' => 'Lecture Units',     'amount' => $fees['tuitionFee']],
-            ['category' => 'Laboratory',    'name' => 'Laboratory Units',  'amount' => $fees['labFee']],
-            ['category' => 'Miscellaneous', 'name' => 'Miscellaneous Fees','amount' => $fees['miscFee']],
-            ['category' => 'Registration',  'name' => 'Registration Fee',  'amount' => 0.00],
+            ['category' => 'Tuition',       'name' => 'Tuition Fee',       'amount' => $fees['tuitionFee']],
+            ['category' => 'Laboratory',    'name' => 'Laboratory Fee',    'amount' => $fees['labFee']],
+            ['category' => 'Miscellaneous', 'name' => 'Miscellaneous Fee', 'amount' => $fees['miscFee']],
         ];
 
         $paymentTerms = $assessment->paymentTerms()->orderBy('term_order')->get();
@@ -671,7 +678,7 @@ class StudentFeeController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  STORE PAYMENT
+    //  STORE PAYMENT (Accounting side)
     // ─────────────────────────────────────────────────────────────
 
     public function storePayment(Request $request, int $userId)
@@ -727,7 +734,7 @@ class StudentFeeController extends Controller
             $paymentService = new StudentPaymentService();
             $paidAmount     = round((float) $validated['amount'], 2);
 
-            $result = $paymentService->processPayment($student, $paidAmount, [
+            $paymentService->processPayment($student, $paidAmount, [
                 'payment_method'   => $validated['payment_method'],
                 'paid_at'          => $validated['payment_date'],
                 'description'      => 'Recorded by accounting staff',
@@ -737,7 +744,7 @@ class StudentFeeController extends Controller
                 'semester'         => $assessment->semester,
             ], false);
 
-            return back()->with('success', 'Payment of ₱' . number_format($paidAmount, 2) . ' recorded successfully for ' . $student->last_name . ', ' . $student->first_name . '.');
+            return back()->with('success', 'Payment of ₱' . number_format($paidAmount, 2) . ' recorded successfully for ' . $this->buildStudentName($student) . '.');
 
         } catch (\Exception $e) {
             Log::error('storePayment failed', [

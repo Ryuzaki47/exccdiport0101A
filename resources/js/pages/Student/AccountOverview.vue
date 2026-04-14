@@ -45,6 +45,10 @@ type Assessment = {
     total_assessment: number;
     status: string;
     created_at: string;
+    // Passed from StudentAccountController alongside assessment data
+    is_irregular?: boolean;
+    middle_initial?: string | null;
+    student_name?: string;
 };
 
 type PaymentTerm = {
@@ -113,7 +117,7 @@ const props = withDefaults(
                 category: string;
                 name: string;
                 code?: string;
-                units?: number;
+                units?: number | null;  // null for flat fees (Miscellaneous)
                 amount: number;
                 subject_id?: number;
             }>;
@@ -280,10 +284,6 @@ const accountBalance = computed(() => remainingBalance.value);
 
 // ── Pay Now navigation ────────────────────────────────────────────────────────
 
-/**
- * Navigate to the payment page for a specific term.
- * Passes term_id and assessment_id so Payment/Create.vue can pre-select.
- */
 const goToPayment = (termId?: number) => {
     const params: Record<string, any> = {};
     if (termId) params.term_id = termId;
@@ -371,7 +371,7 @@ onUnmounted(() => {
                         {{ notification.message }}
                     </p>
 
-                    <!-- Pay Now shortcut via navigation (no inline form) -->
+                    <!-- Pay Now shortcut via navigation (inside notifications only) -->
                     <div v-if="notification.type === 'payment_due' && notification.payment_term_id" class="mt-2">
                         <button
                             @click="goToPayment(notification.payment_term_id!)"
@@ -415,6 +415,18 @@ onUnmounted(() => {
                         <div v-if="latestAssessment" class="font-mono text-xs">
                             {{ latestAssessment.assessment_number }}
                         </div>
+                        <!-- ✅ Regular / Irregular status badge beside latest assessment -->
+                        <span
+                            v-if="latestAssessment"
+                            :class="[
+                                'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold',
+                                latestAssessment.is_irregular
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-blue-100 text-blue-700',
+                            ]"
+                        >
+                            {{ latestAssessment.is_irregular ? 'Irregular' : 'Regular' }}
+                        </span>
                     </div>
                 </div>
 
@@ -428,8 +440,10 @@ onUnmounted(() => {
                 </Link>
             </div>
 
-            <!-- Balance Cards -->
+            <!-- Balance Summary Cards -->
+            <!-- ✅ "Pay now →" link REMOVED from Remaining Balance card -->
             <div class="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+                <!-- Total Assessment -->
                 <div class="ccdi-stat-card">
                     <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total Assessment</p>
                     <p class="text-2xl font-bold text-blue-600">{{ formatCurrency(totalAssessmentFee) }}</p>
@@ -438,6 +452,7 @@ onUnmounted(() => {
                     </p>
                 </div>
 
+                <!-- Total Paid -->
                 <div class="ccdi-stat-card">
                     <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total Paid</p>
                     <p class="text-2xl font-bold text-emerald-600">{{ formatCurrency(totalPaid) }}</p>
@@ -446,6 +461,7 @@ onUnmounted(() => {
                     </p>
                 </div>
 
+                <!-- Remaining Balance — no Pay Now button here -->
                 <div class="ccdi-stat-card">
                     <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Remaining Balance</p>
                     <p
@@ -454,19 +470,11 @@ onUnmounted(() => {
                     >
                         {{ formatCurrency(remainingBalance) }}
                     </p>
-                    <div v-if="remainingBalance > 0" class="mt-1">
-                        <button
-                            @click="goToPayment(firstUnpaidTermId ?? undefined)"
-                            class="text-xs font-medium text-green-700 underline hover:no-underline"
-                        >
-                            Pay now →
-                        </button>
-                    </div>
-                    <p v-else class="mt-0.5 text-xs text-emerald-600 font-medium">✓ Fully paid</p>
+                    <p v-if="remainingBalance <= 0" class="mt-0.5 text-xs text-emerald-600 font-medium">✓ Fully paid</p>
                 </div>
             </div>
 
-            <!-- Tabs: Fees & History only (payment removed) -->
+            <!-- Tabs -->
             <div class="mb-6 ccdi-card">
                 <div class="border-b border-border">
                     <nav class="flex gap-1 px-4">
@@ -561,7 +569,8 @@ onUnmounted(() => {
                                                 class="px-4 py-3 text-right font-medium"
                                                 :class="term.balance > 0 ? 'text-red-600' : 'text-green-600'"
                                             >
-                                                {{ formatCurrency(term.balance) }}
+                                                <!-- ✅ Balance is always >= 0 from AccountService; Math.max guards stale data -->
+                                                {{ formatCurrency(Math.max(0, term.balance)) }}
                                             </td>
                                             <td class="px-4 py-3 text-right">
                                                 <p class="text-sm text-gray-700">
@@ -632,13 +641,20 @@ onUnmounted(() => {
                                             </tr>
                                         </thead>
                                         <tbody class="divide-y divide-gray-100">
+                                            <!--
+                                                ✅ FIXED: Correct fee labels (Tuition Fee / Laboratory Fee / Miscellaneous Fee)
+                                                ✅ FIXED: Miscellaneous Fee is a flat fee — units is null, shown as "—"
+                                                       Tuition Fee and Laboratory Fee show their actual unit counts.
+                                            -->
                                             <tr
                                                 v-for="item in allAssessments.find(a => a.id === latestAssessment!.id)?.fee_breakdown ?? []"
                                                 :key="item.name"
                                                 class="hover:bg-gray-50"
                                             >
                                                 <td class="px-4 py-3 text-gray-700">{{ item.name }}</td>
-                                                <td class="px-4 py-3 text-center text-gray-500">{{ item.units ?? '—' }}</td>
+                                                <td class="px-4 py-3 text-center text-gray-500">
+                                                    {{ (item.units !== null && item.units !== undefined) ? item.units : '—' }}
+                                                </td>
                                                 <td class="px-4 py-3 text-right font-medium text-gray-900">
                                                     {{ formatCurrency(item.amount) }}
                                                 </td>
@@ -794,7 +810,8 @@ onUnmounted(() => {
                                     class="text-lg font-bold"
                                     :class="accountBalance > 0 ? 'text-red-600' : 'text-green-600'"
                                 >
-                                    {{ formatCurrency(accountBalance) }}
+                                    <!-- ✅ No negative sign: balance is always >= 0 -->
+                                    {{ formatCurrency(Math.max(0, accountBalance)) }}
                                 </p>
                             </div>
                         </div>
