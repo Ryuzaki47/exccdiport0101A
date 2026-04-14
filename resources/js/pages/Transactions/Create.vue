@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
+import { Head, Link, useForm } from '@inertiajs/vue3';
 
 defineProps<{
     users: { id: number; name: string; email: string }[];
@@ -14,13 +14,7 @@ const form = useForm({
     payment_channel: 'cash',
 });
 const submit = () => {
-    const page = usePage();
-    const csrfToken = (page.props as any).csrf_token || '';
-    form.post(route('transactions.store'), {
-        headers: {
-            'X-CSRF-TOKEN': csrfToken,
-        },
-    });
+    form.post(route('transactions.store'));
 };
 </script>
 

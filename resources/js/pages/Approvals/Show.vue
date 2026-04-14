@@ -2,7 +2,7 @@
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import { useDataFormatting } from '@/composables/useDataFormatting';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, router, useForm, usePage } from '@inertiajs/vue3';
+import { Head, router, useForm } from '@inertiajs/vue3';
 import { CheckCircle2, RotateCcw, XCircle } from 'lucide-vue-next';
 import { ref } from 'vue';
 
@@ -83,13 +83,7 @@ const showRejectDialog = ref(false);
 const approveForm = useForm({});
 
 const approve = () => {
-    const page = usePage();
-    const csrfToken = (page.props as any).csrf_token || '';
-    approveForm.post(route('approvals.approve', props.approval.id), {
-        headers: {
-            'X-CSRF-TOKEN': csrfToken,
-        },
-    });
+    approveForm.post(route('approvals.approve', props.approval.id));
 };
 
 // Reject — useForm handles processing state and surfaces server-side
@@ -102,12 +96,7 @@ const openRejectDialog = () => {
 };
 
 const reject = () => {
-    const page = usePage();
-    const csrfToken = (page.props as any).csrf_token || '';
     rejectForm.post(route('approvals.reject', props.approval.id), {
-        headers: {
-            'X-CSRF-TOKEN': csrfToken,
-        },
         onSuccess: () => {
             showRejectDialog.value = false;
         },

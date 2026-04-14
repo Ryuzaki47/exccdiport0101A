@@ -33,13 +33,8 @@ const form = useForm({
 });
 
 const submit = () => {
-    // Explicitly include CSRF token to ensure middleware validation passes
-    const csrfToken = (page.props as any).csrf_token || '';
     form.post(route('student-fees.store-student'), {
         preserveScroll: true,
-        headers: {
-            'X-CSRF-TOKEN': csrfToken,
-        },
         onSuccess: () => {
             form.reset();
         },

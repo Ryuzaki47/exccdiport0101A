@@ -159,12 +159,7 @@ const page = usePage()
 function submit() {
   if (!selectedStudent.value) return
   form.user_id = selectedStudent.value.id
-  const csrfToken = (page.props as any).csrf_token || ''
-  form.post(route('student-fees.store'), {
-    headers: {
-      'X-CSRF-TOKEN': csrfToken,
-    },
-  })
+  form.post(route('student-fees.store'))
 }
 </script>
 

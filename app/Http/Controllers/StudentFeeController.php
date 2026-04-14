@@ -515,11 +515,19 @@ class StudentFeeController extends Controller
                 ->with('flash.warning', 'Only administrators can edit assessments.');
         }
 
-        $user       = User::findOrFail($userId);
+        $user = User::findOrFail($userId);
+        
         $assessment = StudentAssessment::where('user_id', $userId)
             ->where('status', 'active')
             ->with('paymentTerms')
-            ->firstOrFail();
+            ->first();
+        
+        // If no active assessment, redirect with a helpful message
+        if (!$assessment) {
+            return redirect()
+                ->route('student-fees.show', $userId)
+                ->with('flash.error', 'No active assessment found for this student. Create one first before editing.');
+        }
 
         $feeRates = [
             'tuition_per_lec_unit' => config('fees.tuition_per_lec_unit', 364.00),

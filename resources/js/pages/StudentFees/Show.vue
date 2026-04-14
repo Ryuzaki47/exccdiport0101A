@@ -602,12 +602,7 @@ const submitPayment = () => {
         if (!paymentForm.amount) paymentForm.setError('amount', 'Please enter an amount');
         return;
     }
-    const page = usePage();
-    const csrfToken = (page.props as any).csrf_token || '';
     paymentForm.post(route('student-fees.payments.store', props.student.id), {
-        headers: {
-            'X-CSRF-TOKEN': csrfToken,
-        },
         preserveScroll: true,
         onSuccess: () => {
             showPaymentDialog.value = false;
