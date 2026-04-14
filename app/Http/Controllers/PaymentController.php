@@ -71,6 +71,19 @@ class PaymentController extends Controller
                 ])
             : collect();
 
+        // Format assessment data for Inertia serialization
+        $assessmentFormatted = $assessment ? [
+            'id'                 => $assessment->id,
+            'assessment_number'  => $assessment->assessment_number,
+            'year_level'         => $assessment->year_level,
+            'semester'           => $assessment->semester,
+            'school_year'        => $assessment->school_year,
+            'total_assessment'   => (float) $assessment->total_assessment,
+            'status'             => $assessment->status,
+            'lec_units'          => $assessment->lec_units,
+            'lab_units'          => $assessment->lab_units,
+        ] : null;
+
         return Inertia::render('Payment/Create', [
             'student' => [
                 'id'         => $user->id,
@@ -79,7 +92,7 @@ class PaymentController extends Controller
                 'course'     => $user->course,
                 'year_level' => $user->year_level,
             ],
-            'assessment'              => $assessment,
+            'assessment'              => $assessmentFormatted,
             'paymentTerms'            => $paymentTerms->values(),
             'pendingApprovalPayments' => $pendingApprovalPayments->values(),
             'preselectedTermId'       => $request->query('term_id') ? (int) $request->query('term_id') : null,
