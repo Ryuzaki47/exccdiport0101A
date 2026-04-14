@@ -159,11 +159,7 @@ const page = usePage()
 function submit() {
   if (!selectedStudent.value) return
   form.user_id = selectedStudent.value.id
-  form.post(route('student-fees.store'), {
-    headers: {
-      'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-    },
-  })
+  form.post(route('student-fees.store'))
 }
 </script>
 
