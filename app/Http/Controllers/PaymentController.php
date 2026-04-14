@@ -76,9 +76,9 @@ class PaymentController extends Controller
                     'id'               => $txn->id,
                     'reference'        => $txn->reference,
                     'amount'           => (float) $txn->amount,
-                    'selected_term_id' => $txn->meta['selected_term_id'] ?? null,
-                    'term_name'        => $txn->meta['term_name'] ?? $txn->type ?? 'Payment',
-                    'created_at'       => $txn->created_at,
+                    'selected_term_id' => data_get($txn->meta, 'selected_term_id'),
+                    'term_name'        => data_get($txn->meta, 'term_name') ?? $txn->type ?? 'Payment',
+                    'created_at'       => $txn->created_at?->toDateTimeString(),
                 ])
             : collect();
 
@@ -314,7 +314,7 @@ class PaymentController extends Controller
 
     public function success(Request $request)
     {
-        $sessionId = $request->query('session_id');
+        Log::info('Session ID:', ['id' => $sessionId]);
 
         if (! $sessionId) {
             Log::warning('PayMongo success redirect missing session_id');
