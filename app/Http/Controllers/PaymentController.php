@@ -162,7 +162,7 @@ class PaymentController extends Controller
                             'name'     => $validated['description'],
                             'quantity' => 1,
                         ]],
-                        'payment_method_types' => $paymentMethodTypes,
+                        'payment_method_types' => ['gcash', 'card', 'paymaya'],
                         'success_url' => url('/payment/success') . '?session_id={CHECKOUT_SESSION_ID}',
                         'cancel_url'  => url('/payment/cancel'),
                         'description' => $validated['description'],
