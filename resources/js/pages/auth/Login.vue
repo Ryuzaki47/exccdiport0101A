@@ -156,7 +156,7 @@ const submit = () => {
                 </template>
             </div>
 
-            <p class="mt-6 text-center text-xs text-gray-400">© {{ new Date().getFullYear() }} CCDI Account Portal. All rights reserved.</p>
+            <p class="mt-6 text-center text-xs text-black">© {{ new Date().getFullYear() }} CCDI Account Portal. All rights reserved.</p>
         </div>
     </div>
 </template>

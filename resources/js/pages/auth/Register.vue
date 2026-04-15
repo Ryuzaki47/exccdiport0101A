@@ -32,7 +32,11 @@ const form = useForm({
 
 const submit = () => {
     form.post(route('register.store'), {
-        onFinish: () => form.reset('password', 'password_confirmation'),
+        onFinish: () => {
+            if (!Object.keys(form.errors).length) {
+                form.reset('password', 'password_confirmation');
+            }
+        },
     });
 };
 </script>
@@ -121,9 +125,9 @@ const submit = () => {
                 <div class="grid gap-2">
                     <Label for="password">Password</Label>
                     <div class="relative">
-                        <Input id="password" :type="showPassword ? 'text' : 'password'" required autocomplete="new-password" v-model="form.password" placeholder="Password" class="pr-10" />
+                        <Input id="password" :type="showPassword ? 'text' : 'password'" required minlength="8" autocomplete="new-password" v-model="form.password" placeholder="Password (min 8 characters)" class="pr-10" />
                         <button type="button" @click="showPassword = !showPassword" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                            <Eye v-if="!showPassword" :size="16" /><EyeOff v-else :size="16" />
+                            <EyeOff v-if="!showPassword" :size="16" /><Eye v-else :size="16" />
                         </button>
                     </div>
                     <InputError :message="form.errors.password" />
@@ -143,7 +147,7 @@ const submit = () => {
                             class="pr-10"
                         />
                         <button type="button" @click="showPasswordConfirmation = !showPasswordConfirmation" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                            <Eye v-if="!showPasswordConfirmation" :size="16" /><EyeOff v-else :size="16" />
+                            <EyeOff v-if="!showPasswordConfirmation" :size="16" /><Eye v-else :size="16" />
                         </button>
                     </div>
                     <InputError :message="form.errors.password_confirmation" />
