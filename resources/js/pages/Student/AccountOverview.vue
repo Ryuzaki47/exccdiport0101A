@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useDataFormatting } from '@/composables/useDataFormatting';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, Link, usePage, useForm, useRouter } from '@inertiajs/vue3';
+import { Head, Link, usePage, useForm, router } from '@inertiajs/vue3';
 import { AlertCircle, CalendarClock, CheckCircle, Clock, XCircle } from 'lucide-vue-next';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
@@ -83,7 +83,6 @@ type Notification = {
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 const page = usePage();
-const router = useRouter();
 const user = computed(() => page.props.auth?.user);
 
 const props = withDefaults(
