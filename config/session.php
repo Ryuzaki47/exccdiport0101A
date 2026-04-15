@@ -29,14 +29,21 @@ return [
 
     'path' => env('SESSION_PATH', '/'),
 
-    'domain' => env('SESSION_DOMAIN'),
+    /*
+    |--------------------------------------------------------------------------
+    | Session Cookie Domain
+    |--------------------------------------------------------------------------
+    | NULL = Laravel uses the current request host automatically.
+    | Do NOT set this to the full hostname — that causes duplicate cookies.
+    |
+    */
+    'domain' => env('SESSION_DOMAIN', null),
 
     /*
     |--------------------------------------------------------------------------
     | HTTPS Only Cookies
     |--------------------------------------------------------------------------
-    | Defaults to TRUE in production automatically.
-    | Override with SESSION_SECURE_COOKIE=false in local .env for HTTP dev.
+    | Auto-true in production. Set SESSION_SECURE_COOKIE=false in local .env.
     |
     */
     'secure' => env('SESSION_SECURE_COOKIE', env('APP_ENV') === 'production'),
