@@ -72,7 +72,7 @@ class StudentFeeController extends Controller
      */
     private function buildStudentName(User $user): string
     {
-        $mi   = $user->middle_initial ? ' ' . strtoupper($user->middle_initial) . '.' : '';
+        $mi = $user->middle_initial ? ' ' . strtoupper($user->middle_initial) . '.' : '';
         return $user->last_name . ', ' . $user->first_name . $mi;
     }
 
@@ -82,12 +82,19 @@ class StudentFeeController extends Controller
 
     public function index(Request $request): Response
     {
+        // ── Sorting params ────────────────────────────────────────────────────
+        // Whitelist both field and direction to prevent SQL injection.
+        $sortField     = in_array($request->input('sort'), ['name', 'balance']) ? $request->input('sort') : 'name';
+        $sortDirection = in_array($request->input('direction'), ['asc', 'desc']) ? $request->input('direction') : 'asc';
+
+        // ── Base query ────────────────────────────────────────────────────────
         $query = User::where('role', UserRoleEnum::STUDENT)
             ->with([
                 'latestAssessment.paymentTerms',
                 'account',
             ]);
 
+        // ── Filters ───────────────────────────────────────────────────────────
         if ($request->filled('search')) {
             $q = $request->search;
             $query->where(function ($q2) use ($q) {
@@ -109,15 +116,31 @@ class StudentFeeController extends Controller
             $query->whereHas('student', fn ($q) => $q->where('enrollment_status', $request->status));
         }
 
+        // ── Server-side sorting ───────────────────────────────────────────────
+        if ($sortField === 'balance') {
+            // Balance lives in the accounts table — LEFT JOIN so students
+            // without an account row still appear (COALESCE → 0).
+            $query
+                ->leftJoin('accounts', 'accounts.user_id', '=', 'users.id')
+                ->select('users.*', DB::raw('COALESCE(accounts.balance, 0) as computed_balance'))
+                ->orderBy('computed_balance', $sortDirection);
+        } else {
+            // Default: sort by last_name (primary) then first_name (tiebreaker).
+            // last_name is the first visible segment in "DELA CRUZ, Juan P." format.
+            $query
+                ->select('users.*')
+                ->orderBy('last_name', $sortDirection)
+                ->orderBy('first_name', $sortDirection);
+        }
+
+        // ── Paginate AFTER sorting ─────────────────────────────────────────────
         $students = $query->paginate(20)->through(fn ($u) => [
             'id'                => $u->id,
             'account_id'        => $u->account_id,
-            // ✅ FIXED: middle initial included in all name constructions
             'name'              => $this->buildStudentName($u),
             'course'            => $u->course,
             'year_level'        => $u->year_level,
             'status'            => $u->student?->enrollment_status ?? 'pending',
-            // ✅ FIXED: balance always non-negative
             'remaining_balance' => max(0, (float) ($u->account?->balance ?? 0)),
             'account'           => $u->account ? ['balance' => max(0, (float) $u->account->balance)] : null,
             'latestAssessment'  => $u->latestAssessment ? [
@@ -135,6 +158,9 @@ class StudentFeeController extends Controller
             ] : null,
         ]);
 
+        // Append sort params to pagination links so page 2, 3... preserve sort state
+        $students->appends($request->only(['search', 'course', 'year_level', 'status', 'sort', 'direction']));
+
         $courses    = User::where('role', UserRoleEnum::STUDENT)
                          ->whereNotNull('course')
                          ->distinct()->pluck('course')->sort()->values();
@@ -145,6 +171,8 @@ class StudentFeeController extends Controller
         return Inertia::render('StudentFees/Index', [
             'students'   => $students,
             'filters'    => $request->only(['search', 'course', 'year_level', 'status']),
+            'sort'       => $sortField,
+            'direction'  => $sortDirection,
             'courses'    => $courses,
             'yearLevels' => $yearLevels,
             'statuses'   => [
@@ -172,7 +200,6 @@ class StudentFeeController extends Controller
             if ($student) {
                 $preselectedStudent = [
                     'id'         => $student->id,
-                    // ✅ FIXED: middle initial included
                     'name'       => $this->buildStudentName($student),
                     'account_id' => $student->account_id,
                     'course'     => $student->course,
@@ -197,10 +224,6 @@ class StudentFeeController extends Controller
 
     // ─────────────────────────────────────────────────────────────
     //  STORE
-    //
-    //  DUPLICATE GUARD: lockForUpdate() + RuntimeException ensures
-    //  no two concurrent requests can create assessments for the same
-    //  student / semester / school_year combination.
     // ─────────────────────────────────────────────────────────────
 
     public function store(Request $request)
@@ -212,16 +235,12 @@ class StudentFeeController extends Controller
             'lec_units'   => ['required', 'numeric', 'min:0', 'max:30'],
             'lab_units'   => ['required', 'integer', 'min:0', 'max:10'],
         ]);
-        
-        // Cast lec_units to integer (handles 18.0 → 18)
+
         $validated['lec_units'] = (int) $validated['lec_units'];
 
         try {
             DB::transaction(function () use ($validated) {
 
-                // ── DUPLICATE GUARD ──────────────────────────────────────────
-                // Lock the student's rows before checking so concurrent
-                // requests cannot both pass and both insert.
                 $existing = StudentAssessment::where('user_id', $validated['user_id'])
                     ->where('semester', $validated['semester'])
                     ->where('school_year', $validated['school_year'])
@@ -236,28 +255,18 @@ class StudentFeeController extends Controller
                     );
                 }
 
-                // Archive any other active assessment for this student.
-                // This runs BEFORE generateAssessmentNumber() so the
-                // archived record is already committed within the transaction
-                // when the generator queries MAX().
                 StudentAssessment::where('user_id', $validated['user_id'])
                     ->where('status', 'active')
                     ->update(['status' => 'completed']);
 
-                // Compute fees
                 $fees    = $this->computeTotal(
                     (int) $validated['lec_units'],
                     (int) $validated['lab_units']
                 );
                 $student = User::findOrFail($validated['user_id']);
 
-                // Generate assessment number AFTER archive so the MAX()
-                // query inside the generator sees all existing records
-                // (including just-archived ones) and returns the correct
-                // next sequence number.
                 $assessmentNumber = StudentAssessment::generateAssessmentNumber();
 
-                // Create assessment
                 $assessment = StudentAssessment::create([
                     'assessment_number' => $assessmentNumber,
                     'user_id'           => $validated['user_id'],
@@ -270,12 +279,10 @@ class StudentFeeController extends Controller
                     'status'            => 'active',
                 ]);
 
-                // Build and insert payment terms
                 foreach ($this->buildPaymentTerms($fees['total']) as $term) {
                     $assessment->paymentTerms()->create($term);
                 }
 
-                // Post charge transaction to ledger
                 Transaction::create([
                     'user_id'         => $validated['user_id'],
                     'kind'            => 'charge',
@@ -295,7 +302,6 @@ class StudentFeeController extends Controller
                     ]),
                 ]);
 
-                // Recalculate account balance
                 AccountService::recalculate($student);
             });
         } catch (\RuntimeException $e) {
@@ -324,8 +330,6 @@ class StudentFeeController extends Controller
             'account',
         ])->findOrFail($userId);
 
-        // ── Load ALL assessments for this student so the assessment selector
-        //    in the Vue component works and allAssessments is never empty. ──────
         $allAssessmentsRaw = StudentAssessment::where('user_id', $userId)
             ->with('paymentTerms')
             ->orderByDesc('created_at')
@@ -333,7 +337,6 @@ class StudentFeeController extends Controller
 
         $assessment = $user->latestAssessment;
 
-        // ── Build fee breakdown for EACH assessment ───────────────────────────
         $allAssessmentsFormatted = $allAssessmentsRaw->map(function ($a) use ($user) {
             $fees = $this->computeTotal($a->lec_units, $a->lab_units);
 
@@ -378,7 +381,6 @@ class StudentFeeController extends Controller
             ];
         })->values()->all();
 
-        // ── Active assessment fee breakdown ───────────────────────────────────
         $feeBreakdown = null;
         if ($assessment) {
             $feeBreakdown = $this->computeTotal(
@@ -387,9 +389,6 @@ class StudentFeeController extends Controller
             );
         }
 
-        // ── Payments (Payment history table) ─────────────────────────────────
-        // Fetch from the payments table, joining assessment so the Vue can
-        // filter by assessment_id and display school_year / semester.
         $payments = \App\Models\Payment::where('user_id', $userId)
             ->with('assessment')
             ->orderByDesc('created_at')
@@ -410,9 +409,6 @@ class StudentFeeController extends Controller
             ])
             ->all();
 
-        // ── Transactions (Ledger) ─────────────────────────────────────────────
-        // Only payment-kind transactions — charge rows belong in the assessment
-        // history view, not the ledger.
         $transactions = Transaction::where('user_id', $userId)
             ->where('kind', 'payment')
             ->orderByDesc('created_at')
@@ -431,7 +427,6 @@ class StudentFeeController extends Controller
             ])
             ->all();
 
-        // ── Active assessment formatted for the main prop ─────────────────────
         $activeAssessmentFormatted = $assessment ? [
             'id'               => $assessment->id,
             'course'           => $user->course,
@@ -505,8 +500,6 @@ class StudentFeeController extends Controller
 
     // ─────────────────────────────────────────────────────────────
     //  EDIT
-    //
-    //  FIX: Admin-only guard. Accounting gets a redirect to show.
     // ─────────────────────────────────────────────────────────────
 
     public function edit(int $userId): Response
@@ -523,13 +516,12 @@ class StudentFeeController extends Controller
         }
 
         $user = User::findOrFail($userId);
-        
+
         $assessment = StudentAssessment::where('user_id', $userId)
             ->where('status', 'active')
             ->with('paymentTerms')
             ->first();
-        
-        // If no active assessment, redirect with a helpful message
+
         if (!$assessment) {
             return redirect()
                 ->route('student-fees.show', $userId)
@@ -547,7 +539,6 @@ class StudentFeeController extends Controller
         return Inertia::render('StudentFees/Edit', [
             'student' => [
                 'id'         => $user->id,
-                // ✅ FIXED: middle initial included
                 'name'       => $this->buildStudentName($user),
                 'account_id' => $user->account_id,
                 'course'     => $user->course,
@@ -577,7 +568,6 @@ class StudentFeeController extends Controller
             'lab_units'   => ['required', 'integer', 'min:0', 'max:10'],
         ]);
 
-        // Cast lec_units to integer (handles 18.0 → 18)
         $validated['lec_units'] = (int) $validated['lec_units'];
 
         $assessment = StudentAssessment::where('user_id', $userId)
@@ -660,7 +650,6 @@ class StudentFeeController extends Controller
             ->get()
             ->map(fn ($u) => [
                 'id'         => $u->id,
-                // ✅ FIXED: middle initial included
                 'name'       => $this->buildStudentName($u),
                 'account_id' => $u->account_id,
                 'course'     => $u->course,
