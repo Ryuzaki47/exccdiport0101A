@@ -1,4 +1,14 @@
 <script setup lang="ts">
+/**
+ * TextLink — Styled text hyperlink wrapper (defaults to GET).
+ *
+ * ⚠️  IMPORTANT: This component defaults to GET requests.
+ * For POST actions (logout, state mutations, etc.), use:
+ *   - router.post() directly, or
+ *   - useForm().post()
+ *
+ * Do NOT use TextLink for logout or other POST actions.
+ */
 import { LinkComponentBaseProps, Method } from '@inertiajs/core';
 import { Link } from '@inertiajs/vue3';
 

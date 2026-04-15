@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import TextLink from '@/components/TextLink.vue';
 import { Button } from '@/components/ui/button';
 import AuthLayout from '@/layouts/AuthLayout.vue';
 import { Head, useForm } from '@inertiajs/vue3';
 import { LoaderCircle } from 'lucide-vue-next';
 
-const form = useForm({});
-
 defineProps<{
     status?: string;
 }>();
+
+const form = useForm({});
+const logoutForm = useForm({});
+
+const handleLogout = () => {
+    logoutForm.post(route('logout'));
+};
 </script>
 
 <template>
@@ -20,13 +24,22 @@ defineProps<{
             A new verification link has been sent to the email address you provided during registration.
         </div>
 
-        <form @submit.prevent="form.post(route('verification.send'))" class="space-y-6 text-center">
-            <Button :disabled="form.processing" type="submit" variant="secondary">
-                <LoaderCircle v-if="form.processing" class="h-4 w-4 animate-spin" />
-                Resend verification email
-            </Button>
+        <div class="space-y-6 text-center">
+            <form @submit.prevent="form.post(route('verification.send'))">
+                <Button :disabled="form.processing" type="submit" variant="secondary">
+                    <LoaderCircle v-if="form.processing" class="h-4 w-4 animate-spin" />
+                    Resend verification email
+                </Button>
+            </form>
 
-            <TextLink :href="route('logout')" as="button" class="mx-auto block text-sm"> Log out </TextLink>
-        </form>
+            <button
+                type="button"
+                class="mx-auto block text-sm text-foreground underline decoration-neutral-300 underline-offset-4 transition-colors duration-300 ease-out hover:decoration-current! dark:decoration-neutral-500"
+                :disabled="logoutForm.processing"
+                @click="handleLogout"
+            >
+                Log out
+            </button>
+        </div>
     </AuthLayout>
 </template>
