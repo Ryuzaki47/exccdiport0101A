@@ -128,7 +128,7 @@ const submit = () => {
                             <div class="relative">
                                 <Input id="password" :type="showPassword ? 'text' : 'password'" v-model="form.password" required autocomplete="current-password" class="h-10 rounded-xl border-gray-200 bg-gray-50 pr-10 text-sm focus:bg-white" />
                                 <button type="button" @click="showPassword = !showPassword" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                                    <Eye v-if="!showPassword" :size="16" /><EyeOff v-else :size="16" />
+                                    <EyeOff v-if="!showPassword" :size="16" /><Eye v-else :size="16" />
                                 </button>
                             </div>
                             <InputError :message="form.errors.password" />
