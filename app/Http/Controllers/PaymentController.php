@@ -37,77 +37,87 @@ class PaymentController extends Controller
 
     public function create(Request $request): Response
     {
-        $user         = $request->user();
-        $assessmentId = $request->query('assessment_id');
+        try {
+            $user         = $request->user();
+            $assessmentId = $request->query('assessment_id');
 
-        $assessment = $assessmentId
-            ? StudentAssessment::where('id', $assessmentId)
-                ->where('user_id', $user->id)
-                ->where('status', 'active')
-                ->first()
-            : StudentAssessment::where('user_id', $user->id)
-                ->where('status', 'active')
-                ->latest()
-                ->first();
+            $assessment = $assessmentId
+                ? StudentAssessment::where('id', $assessmentId)
+                    ->where('user_id', $user->id)
+                    ->where('status', 'active')
+                    ->first()
+                : StudentAssessment::where('user_id', $user->id)
+                    ->where('status', 'active')
+                    ->latest()
+                    ->first();
 
-        $paymentTerms = $assessment
-            ? StudentPaymentTerm::where('student_assessment_id', $assessment->id)
-                ->orderBy('term_order')
-                ->get()
-                ->map(fn ($term) => [
-                    'id'         => $term->id,
-                    'term_name'  => $term->term_name,
-                    'term_order' => $term->term_order,
-                    'percentage' => $term->percentage,
-                    'amount'     => (float) $term->amount,
-                    'balance'    => (float) $term->balance,
-                    'due_date'   => $term->due_date?->format('Y-m-d'),
-                    'status'     => $term->status,
-                    'remarks'    => $term->remarks,
-                ])
-            : collect();
+            $paymentTerms = $assessment
+                ? StudentPaymentTerm::where('student_assessment_id', $assessment->id)
+                    ->orderBy('term_order')
+                    ->get()
+                    ->map(fn ($term) => [
+                        'id'         => $term->id,
+                        'term_name'  => $term->term_name ?? 'Unknown Term',
+                        'term_order' => $term->term_order ?? 0,
+                        'percentage' => $term->percentage ?? 0,
+                        'amount'     => (float) ($term->amount ?? 0),
+                        'balance'    => (float) ($term->balance ?? 0),
+                        'due_date'   => $term->due_date?->format('Y-m-d'),
+                        'status'     => $term->status ?? 'unpaid',
+                        'remarks'    => $term->remarks,
+                    ])
+                : collect();
 
-        $pendingApprovalPayments = $assessment
-            ? Transaction::where('user_id', $user->id)
-                ->where('kind', 'payment')
-                ->where('status', PaymentStatus::AWAITING_APPROVAL->value)
-                ->get()
-                ->map(fn ($txn) => [
-                    'id'               => $txn->id,
-                    'reference'        => $txn->reference,
-                    'amount'           => (float) $txn->amount,
-                    'selected_term_id' => data_get($txn->meta, 'selected_term_id'),
-                    'term_name'        => data_get($txn->meta, 'term_name') ?? $txn->type ?? 'Payment',
-                    'created_at'       => $txn->created_at?->toDateTimeString(),
-                ])
-            : collect();
+            $pendingApprovalPayments = $assessment
+                ? Transaction::where('user_id', $user->id)
+                    ->where('kind', 'payment')
+                    ->where('status', PaymentStatus::AWAITING_APPROVAL->value)
+                    ->get()
+                    ->map(fn ($txn) => [
+                        'id'               => $txn->id,
+                        'reference'        => $txn->reference ?? 'N/A',
+                        'amount'           => (float) ($txn->amount ?? 0),
+                        'selected_term_id' => data_get($txn->meta, 'selected_term_id'),
+                        'term_name'        => data_get($txn->meta, 'term_name') ?? $txn->type ?? 'Payment',
+                        'created_at'       => $txn->created_at?->toDateTimeString(),
+                    ])
+                : collect();
 
-        // Format assessment data for Inertia serialization
-        $assessmentFormatted = $assessment ? [
-            'id'                 => $assessment->id,
-            'assessment_number'  => $assessment->assessment_number,
-            'year_level'         => $assessment->year_level,
-            'semester'           => $assessment->semester,
-            'school_year'        => $assessment->school_year,
-            'total_assessment'   => (float) $assessment->total_assessment,
-            'status'             => $assessment->status,
-            'lec_units'          => $assessment->lec_units,
-            'lab_units'          => $assessment->lab_units,
-        ] : null;
+            // Format assessment data for Inertia serialization
+            $assessmentFormatted = $assessment ? [
+                'id'                 => $assessment->id,
+                'assessment_number'  => $assessment->assessment_number ?? 'N/A',
+                'year_level'         => $assessment->year_level ?? 'Unknown',
+                'semester'           => $assessment->semester ?? 'Unknown',
+                'school_year'        => $assessment->school_year ?? 'Unknown',
+                'total_assessment'   => (float) ($assessment->total_assessment ?? 0),
+                'status'             => $assessment->status ?? 'active',
+                'lec_units'          => $assessment->lec_units ?? 0,
+                'lab_units'          => $assessment->lab_units ?? 0,
+            ] : null;
 
-        return Inertia::render('Payment/Create', [
-            'student' => [
-                'id'         => $user->id,
-                'name'       => $user->name,
-                'account_id' => $user->account_id,
-                'course'     => $user->course,
-                'year_level' => $user->year_level,
-            ],
-            'assessment'              => $assessmentFormatted,
-            'paymentTerms'            => $paymentTerms->values(),
-            'pendingApprovalPayments' => $pendingApprovalPayments->values(),
-            'preselectedTermId'       => $request->query('term_id') ? (int) $request->query('term_id') : null,
-        ]);
+            return Inertia::render('Payment/Create', [
+                'student' => [
+                    'id'         => $user->id,
+                    'name'       => $user->name,
+                    'account_id' => $user->account_id,
+                    'course'     => $user->course,
+                    'year_level' => $user->year_level,
+                ],
+                'assessment'              => $assessmentFormatted,
+                'paymentTerms'            => $paymentTerms->values(),
+                'pendingApprovalPayments' => $pendingApprovalPayments->values(),
+                'preselectedTermId'       => $request->query('term_id') ? (int) $request->query('term_id') : null,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('PaymentController::create() failed', [
+                'user_id'       => $request->user()?->id,
+                'assessment_id' => $request->query('assessment_id'),
+                'error'         => $e->getMessage(),
+                'trace'         => $e->getTraceAsString(),
+            ]);
+            throw $e;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

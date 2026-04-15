@@ -245,6 +245,45 @@ const submitDrop = () => {
         onSuccess: () => closeDrop(),
     });
 };
+
+// ── Column Sorting ─────────────────────────────────────────────────────────
+const sortField = ref<'name' | 'balance'>('name');
+const sortDirection = ref<'asc' | 'desc'>('asc');
+
+const toggleSort = (field: 'name' | 'balance') => {
+    if (sortField.value === field) {
+        // Toggle direction if same column; default to asc for name, desc for balance
+        sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc';
+    } else {
+        // Switch column; default to asc for name, desc for balance
+        sortField.value = field;
+        sortDirection.value = field === 'name' ? 'asc' : 'desc';
+    }
+};
+
+const sortedStudents = computed(() => {
+    // Create a copy to avoid mutating the original Inertia data
+    const sorted = [...props.students.data];
+
+    sorted.sort((a, b) => {
+        let compareResult = 0;
+
+        if (sortField.value === 'name') {
+            // String comparison using localeCompare for proper alphabetical sorting
+            compareResult = (a.name || '').localeCompare(b.name || '', 'en', { numeric: true });
+        } else if (sortField.value === 'balance') {
+            // Numeric comparison; treat null as 0
+            const balanceA = parseFloat(String(a.remaining_balance ?? 0));
+            const balanceB = parseFloat(String(b.remaining_balance ?? 0));
+            compareResult = balanceA - balanceB;
+        }
+
+        // Apply direction: -1 reverses the result for descending
+        return sortDirection.value === 'asc' ? compareResult : -compareResult;
+    });
+
+    return sorted;
+});
 </script>
  
 <template>
@@ -341,16 +380,36 @@ const submitDrop = () => {
                     <thead class="bg-muted/50">
                         <tr>
                             <th class="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Account ID</th>
-                            <th class="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Name</th>
+                            <th
+                                @click="toggleSort('name')"
+                                class="cursor-pointer px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                            >
+                                <div class="flex items-center gap-2">
+                                    <span>Name</span>
+                                    <span v-if="sortField === 'name'" class="text-xs font-bold">
+                                        {{ sortDirection === 'asc' ? '↑' : '↓' }}
+                                    </span>
+                                </div>
+                            </th>
                             <th class="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Course</th>
                             <th class="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Year Level</th>
                             <th class="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
-                            <th class="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Balance</th>
+                            <th
+                                @click="toggleSort('balance')"
+                                class="cursor-pointer px-5 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                            >
+                                <div class="flex items-center justify-end gap-2">
+                                    <span>Balance</span>
+                                    <span v-if="sortField === 'balance'" class="text-xs font-bold">
+                                        {{ sortDirection === 'asc' ? '↑' : '↓' }}
+                                    </span>
+                                </div>
+                            </th>
                             <th class="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-border bg-card">
-                        <tr v-for="student in students.data" :key="student.id" class="transition-colors hover:bg-muted/30">
+                        <tr v-for="student in sortedStudents" :key="student.id" class="transition-colors hover:bg-muted/30">
                             <td class="px-5 py-3.5 text-xs font-mono text-muted-foreground">{{ student.account_id }}</td>
                             <td class="px-5 py-3.5">
                                 <div class="flex items-center gap-2.5">
