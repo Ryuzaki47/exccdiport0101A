@@ -49,6 +49,7 @@ const props = withDefaults(
         paymentTerms: PaymentTerm[];
         pendingApprovalPayments: PendingPayment[];
         preselectedTermId?: number | null;
+        availablePaymentMethods?: string[];
         student: {
             id: number;
             name: string;
@@ -61,6 +62,7 @@ const props = withDefaults(
         paymentTerms: () => [],
         pendingApprovalPayments: () => [],
         preselectedTermId: null,
+        availablePaymentMethods: () => ['credit_card', 'debit_card', 'bank_transfer'],
     },
 );
 
@@ -73,12 +75,17 @@ const breadcrumbs = [
 
 // ── Payment methods available to students ─────────────────────────────────────
 
-const paymentMethods = [
+const allPaymentMethods = [
     { value: 'gcash',         label: 'GCash' },
     { value: 'bank_transfer', label: 'Bank Transfer' },
     { value: 'credit_card',   label: 'Credit Card' },
     { value: 'debit_card',    label: 'Debit Card' },
 ];
+
+// Filter payment methods based on environment availability
+const availablePaymentMethods = computed(() =>
+    allPaymentMethods.filter((m) => props.availablePaymentMethods.includes(m.value)),
+);
 
 // ── Pending payments indexed by term ─────────────────────────────────────────
 
@@ -123,7 +130,7 @@ const effectiveBalance = computed(() => {
 
 const form = useForm({
     amount: 0 as number,
-    payment_method: 'gcash',
+    payment_method: computed(() => availablePaymentMethods.value[0]?.value ?? 'credit_card').value,
     paid_at: new Date().toISOString().split('T')[0],
     selected_term_id: props.preselectedTermId ?? (null as number | null),
     description: '' as string,
@@ -414,7 +421,7 @@ const dueDateUrgency = (dueDate: string | null): 'red' | 'amber' | 'green' | nul
                                 class="w-full rounded-lg border px-4 py-2 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             >
                                 <option
-                                    v-for="method in paymentMethods"
+                                    v-for="method in availablePaymentMethods"
                                     :key="method.value"
                                     :value="method.value"
                                 >

@@ -96,6 +96,12 @@ class PaymentController extends Controller
                 'lab_units'          => $assessment->lab_units ?? 0,
             ] : null;
 
+            // Available payment methods based on environment
+            $isLiveMode = str_starts_with($this->secretKey, 'sk_live_');
+            $availablePaymentMethods = $isLiveMode
+                ? ['credit_card', 'debit_card', 'gcash', 'bank_transfer']
+                : ['credit_card', 'debit_card', 'bank_transfer']; // GCash unavailable in test mode
+
             return Inertia::render('Payment/Create', [
                 'student' => [
                     'id'         => $user->id,
@@ -108,6 +114,7 @@ class PaymentController extends Controller
                 'paymentTerms'            => $paymentTerms->values(),
                 'pendingApprovalPayments' => $pendingApprovalPayments->values(),
                 'preselectedTermId'       => $request->query('term_id') ? (int) $request->query('term_id') : null,
+                'availablePaymentMethods' => $availablePaymentMethods,
             ]);
         } catch (\Throwable $e) {
             Log::error('PaymentController::create() failed', [
