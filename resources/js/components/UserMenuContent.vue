@@ -2,7 +2,7 @@
 import UserInfo from '@/components/UserInfo.vue';
 import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import type { StudentUser, User } from '@/types';
-import { Link, router } from '@inertiajs/vue3';
+import { Link, useForm } from '@inertiajs/vue3';
 import { LogOut, Settings } from 'lucide-vue-next';
 
 interface Props {
@@ -11,8 +11,10 @@ interface Props {
 
 defineProps<Props>();
 
+const logoutForm = useForm({});
+
 const handleLogout = () => {
-    router.post('/logout');
+    logoutForm.post(route('logout'));
 };
 </script>
 
@@ -36,9 +38,13 @@ const handleLogout = () => {
 
     <DropdownMenuSeparator />
 
-    <!-- ✅ POST logout (NO GET REQUEST) -->
     <DropdownMenuItem as-child>
-        <button type="button" class="flex w-full items-center px-2 py-1.5 text-sm" @click="handleLogout">
+        <button
+            type="button"
+            class="flex w-full items-center px-2 py-1.5 text-sm"
+            :disabled="logoutForm.processing"
+            @click="handleLogout"
+        >
             <LogOut class="mr-2 h-4 w-4" />
             Log out
         </button>
