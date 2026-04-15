@@ -240,7 +240,7 @@ class PaymentController extends Controller
                             'name'     => $validated['description'],
                             'quantity' => 1,
                         ]],
-                        'payment_method_types' => ['gcash', 'card', 'paymaya'],
+                        'payment_method_types' => $this->getPaymentMethodTypes(),
                         'success_url' => url('/payment/success') . '?session_id={CHECKOUT_SESSION_ID}',
                         'cancel_url'  => url('/payment/cancel')  . '?session_id={CHECKOUT_SESSION_ID}',
                         'description' => $validated['description'],
@@ -650,5 +650,26 @@ class PaymentController extends Controller
         ]);
 
         return response()->json(['message' => 'Payment verified successfully.']);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  PAYMENT METHOD TYPES — Live vs. Test Mode
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Get available payment method types based on environment.
+     *
+     * Live Mode (sk_live_*): GCash, Card, PayMaya
+     * Test Mode (sk_test_*): Card only
+     *
+     * Note: PayMongo test mode does not support e-wallet testing.
+     */
+    private function getPaymentMethodTypes(): array
+    {
+        $isLiveMode = str_starts_with($this->secretKey, 'sk_live_');
+
+        return $isLiveMode
+            ? ['gcash', 'card', 'paymaya']
+            : ['card']; // GCash/Maya not available in test mode
     }
 }
