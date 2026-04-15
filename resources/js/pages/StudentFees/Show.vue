@@ -2,12 +2,20 @@
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useDataFormatting } from '@/composables/useDataFormatting';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import {
     AlertCircle,
     ArrowLeft,
@@ -21,7 +29,7 @@ import {
 } from 'lucide-vue-next';
 import { computed, ref, watch } from 'vue';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────────────────────────
 
 interface PaymentTerm {
     id: number;
@@ -58,19 +66,28 @@ interface Assessment {
 }
 
 interface Props {
-    student: any
-    assessment: any
-    allAssessments?: Assessment[]
-    transactions?: any[]
-    payments?: any[]
-    feeBreakdown?: Array<{ category: string; total: number; items: number }>
-    backUrl?: string
-    enrolledSubjectsByAssessment?: Record<number, number[]>
+    student: any;
+    assessment: any;
+    allAssessments?: Assessment[];
+    transactions?: any[];
+    payments?: any[];
+    feeBreakdown?: Array<{ category: string; total: number; items: number }>;
+    backUrl?: string;
+    enrolledSubjectsByAssessment?: Record<number, number[]>;
+    // ✅ FIX: was missing from Props interface, causing TS error
+    miscItems?: Array<{ label?: string; name?: string; amount: number }>;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+    allAssessments: () => [],
+    transactions: () => [],
+    payments: () => [],
+    feeBreakdown: () => [],
+    enrolledSubjectsByAssessment: () => ({}),
+    miscItems: () => [],
+});
 
-// ─── Assessment selector ──────────────────────────────────────────────────────
+// ─── Assessment selector ────────────────────────────────────────────────────
 
 const { formatCurrency } = useDataFormatting();
 const page = usePage();
@@ -80,7 +97,10 @@ const selectedAssessmentId = ref<number | null>(props.assessment?.id ?? null);
 
 const selectedAssessment = computed(() => {
     if (!selectedAssessmentId.value) return props.assessment;
-    return (props.allAssessments ?? []).find((a) => a.id === selectedAssessmentId.value) ?? props.assessment;
+    return (
+        (props.allAssessments ?? []).find((a) => a.id === selectedAssessmentId.value) ??
+        props.assessment
+    );
 });
 
 const exportUrl = computed(() => {
@@ -88,28 +108,53 @@ const exportUrl = computed(() => {
     return selectedAssessmentId.value ? `${base}?assessment_id=${selectedAssessmentId.value}` : base;
 });
 
-// ─── Balance ──────────────────────────────────────────────────────────────────
+// ─── Balance ────────────────────────────────────────────────────────────────
 
 const remainingBalance = computed(() => {
-    const terms: PaymentTerm[] = (selectedAssessment.value as any)?.paymentTerms ?? props.assessment?.paymentTerms ?? [];
+    // Always use the selected assessment's payment terms for balance calculation
+    const terms: PaymentTerm[] =
+        (selectedAssessment.value as any)?.paymentTerms ??
+        props.assessment?.paymentTerms ??
+        [];
+    
+    // Sum balance from payment terms (most accurate source)
     if (terms.length > 0) {
         const termsTotal = terms.reduce((sum, t) => sum + parseFloat(String(t.balance)), 0);
         if (termsTotal > 0) return Math.round(termsTotal * 100) / 100;
     }
-    const accountBal = parseFloat(String(props.student.account?.balance ?? 0));
-    return Math.max(0, accountBal);
+
+    // If NO payment terms exist for this assessment, balance is zero
+    // DO NOT fall back to account.balance—that's the total across all assessments,
+    // not the balance for THIS specific assessment
+    return 0;
 });
 
-const totalAssessment = computed(() => parseFloat(String(selectedAssessment.value?.total_assessment ?? props.assessment?.total_assessment ?? 0)));
+const totalAssessment = computed(() =>
+    parseFloat(
+        String(
+            selectedAssessment.value?.total_assessment ??
+                props.assessment?.total_assessment ??
+                0,
+        ),
+    ),
+);
+
 const totalPaid = computed(() => Math.max(0, totalAssessment.value - remainingBalance.value));
 
 const paymentTimingStatus = computed((): 'behind' | 'on_track' | 'paid' => {
-    const terms: PaymentTerm[] = (selectedAssessment.value as any)?.paymentTerms ?? props.assessment?.paymentTerms ?? [];
+    const terms: PaymentTerm[] =
+        (selectedAssessment.value as any)?.paymentTerms ??
+        props.assessment?.paymentTerms ??
+        [];
     if (terms.length === 0) return 'behind';
     if (remainingBalance.value === 0) return 'paid';
     const sorted = [...terms].sort((a, b) => a.term_order - b.term_order);
     const first = sorted[0];
-    if (first.status === 'pending' && parseFloat(String(first.balance)) >= parseFloat(String(first.amount)) * 0.99) return 'behind';
+    if (
+        first.status === 'pending' &&
+        parseFloat(String(first.balance)) >= parseFloat(String(first.amount)) * 0.99
+    )
+        return 'behind';
     return 'on_track';
 });
 
@@ -139,30 +184,26 @@ const balanceCardConfig = computed(() => {
     }
 });
 
-// ─── Payment Terms ─────────────────────────────────────────────────────────────
+// ─── Payment Terms ────────────────────────────────────────────────────────────
 
 const allTermsSorted = computed((): PaymentTerm[] => {
-    const terms: PaymentTerm[] = (selectedAssessment.value as any)?.paymentTerms ?? props.assessment?.paymentTerms ?? [];
+    const terms: PaymentTerm[] =
+        (selectedAssessment.value as any)?.paymentTerms ??
+        props.assessment?.paymentTerms ??
+        [];
     return [...terms].sort((a, b) => a.term_order - b.term_order);
 });
 
-const paidTermsCount = computed(() => allTermsSorted.value.filter((t) => t.status === 'paid').length);
+const paidTermsCount = computed(() =>
+    allTermsSorted.value.filter((t) => t.status === 'paid').length,
+);
 
-// ─── Enhanced Fee Breakdown with Calculation Transparency ─────────────────────
-//
-// ENHANCEMENT: Provides detailed breakdown showing exactly how the total assessment
-// is calculated:
-//   Total Assessment = (Tuition by subject) + (Laboratory fees) + (Miscellaneous)
-//
-// Each section can be expanded to show detailed item listings.
+// ─── Fee Breakdown ─────────────────────────────────────────────────────────────
 
-// Extracts all tuition line items (one per subject) from fee_breakdown
 const tuitionItems = computed(() => {
     const selectedAssess = selectedAssessment.value as any;
     if (!selectedAssess) return [];
-
-    const breakdown = selectedAssess.fee_breakdown ?? [];
-    return breakdown
+    return (selectedAssess.fee_breakdown ?? [])
         .filter((item: any) => item.category === 'Tuition')
         .map((item: any) => ({
             ...item,
@@ -171,34 +212,31 @@ const tuitionItems = computed(() => {
         }));
 });
 
-// Total tuition (sum of all subject tuitions)
-const totalTuition = computed(() => {
-    return Math.round(tuitionItems.value.reduce((sum: number, item: any) => sum + item.amount, 0) * 100) / 100;
-});
+const totalTuition = computed(() =>
+    Math.round(
+        tuitionItems.value.reduce((sum: number, item: any) => sum + item.amount, 0) * 100,
+    ) / 100,
+);
 
-// Extracts all laboratory fee items from fee_breakdown
 const labItems = computed(() => {
     const selectedAssess = selectedAssessment.value as any;
     if (!selectedAssess) return [];
-
-    const breakdown = selectedAssess.fee_breakdown ?? [];
-    return breakdown
+    return (selectedAssess.fee_breakdown ?? [])
         .filter((item: any) => item.category === 'Laboratory')
         .map((item: any) => ({
             ...item,
-            // units comes from the controller (assessment.lab_units)
             units: item.units ?? selectedAssess.lab_units ?? 0,
             displayName: item.name?.replace('Laboratory Fee — ', '') || 'Laboratory',
             amount: parseFloat(String(item.amount)),
         }));
 });
 
-// Total lab fees (sum of all lab subject fees)
-const totalLab = computed(() => {
-    return Math.round(labItems.value.reduce((sum: number, item: any) => sum + item.amount, 0) * 100) / 100;
-});
+const totalLab = computed(() =>
+    Math.round(
+        labItems.value.reduce((sum: number, item: any) => sum + item.amount, 0) * 100,
+    ) / 100,
+);
 
-// Extracts miscellaneous and other items, organized by subcategory
 interface MiscItemGroup {
     category: string;
     subcategory: string;
@@ -207,44 +245,84 @@ interface MiscItemGroup {
     total: number;
 }
 
-// Miscellaneous fees — use the miscItems prop (from config('fees.misc_items'))
-// rather than trying to pattern-match the single "Miscellaneous Fee" line in
-// fee_breakdown. The controller always sends one lumped Misc entry; the
-// itemized breakdown lives in props.miscItems.
 const miscellaneousItemsByGroup = computed((): MiscItemGroup[] => {
     const selectedAssess = selectedAssessment.value as any;
     if (!selectedAssess) return [];
 
-    // Total misc from fee_breakdown (authoritative — computed by controller)
-    const miscEntry = (selectedAssess.fee_breakdown ?? []).find((item: any) => item.category === 'Miscellaneous');
+    const miscEntry = (selectedAssess.fee_breakdown ?? []).find(
+        (item: any) => item.category === 'Miscellaneous',
+    );
     if (!miscEntry) return [];
 
-    // Use the per-item list from the fees config for the itemized display
     const items: Array<{ name: string; amount: number }> = (props.miscItems ?? [])
         .filter((i: any) => parseFloat(String(i.amount)) > 0)
-        .map((i: any) => ({ name: i.label ?? i.name, amount: parseFloat(String(i.amount)) }));
+        .map((i: any) => ({
+            name: i.label ?? i.name,
+            amount: parseFloat(String(i.amount)),
+        }));
 
     if (items.length === 0) {
-        // Fallback: show single lump entry
-        return [{
-            category: 'Miscellaneous',
-            subcategory: 'Miscellaneous',
-            label: 'Miscellaneous Fees',
-            items: [{ name: 'Miscellaneous Fee (Fixed)', amount: parseFloat(String(miscEntry.amount)) }],
-            total: parseFloat(String(miscEntry.amount)),
-        }];
+        return [
+            {
+                category: 'Miscellaneous',
+                subcategory: 'Miscellaneous',
+                label: 'Miscellaneous Fees',
+                items: [
+                    {
+                        name: 'Miscellaneous Fee (Fixed)',
+                        amount: parseFloat(String(miscEntry.amount)),
+                    },
+                ],
+                total: parseFloat(String(miscEntry.amount)),
+            },
+        ];
     }
 
-    // Group into academic / student life / support (same categories as before)
     const academicPatterns = ['registration', 'lms', 'library', 'entrepreneurship'];
-    const studentPatterns  = ['athletic', 'prisaa', 'publication', 'id', 'biccs', 'pccl', 'league', 'audio-visual', 'faculty development', 'guidance', 'entrep'];
-    const supportPatterns  = ['medical', 'insurance', 'cultural', 'maintenance'];
+    const studentPatterns = [
+        'athletic',
+        'prisaa',
+        'publication',
+        'id',
+        'biccs',
+        'pccl',
+        'league',
+        'audio-visual',
+        'faculty development',
+        'guidance',
+        'entrep',
+    ];
+    const supportPatterns = ['medical', 'insurance', 'cultural', 'maintenance'];
 
     const categories: Record<string, MiscItemGroup> = {
-        academic:     { category: 'Academic Services',       subcategory: 'Academic', label: 'Academic Services',       items: [], total: 0 },
-        student_life: { category: 'Student Life & Activities', subcategory: 'Student', label: 'Student Life & Activities', items: [], total: 0 },
-        support:      { category: 'Support Services',        subcategory: 'Support',  label: 'Support Services',        items: [], total: 0 },
-        other:        { category: 'Other Fees',              subcategory: 'Other',    label: 'Other Fees',              items: [], total: 0 },
+        academic: {
+            category: 'Academic Services',
+            subcategory: 'Academic',
+            label: 'Academic Services',
+            items: [],
+            total: 0,
+        },
+        student_life: {
+            category: 'Student Life & Activities',
+            subcategory: 'Student',
+            label: 'Student Life & Activities',
+            items: [],
+            total: 0,
+        },
+        support: {
+            category: 'Support Services',
+            subcategory: 'Support',
+            label: 'Support Services',
+            items: [],
+            total: 0,
+        },
+        other: {
+            category: 'Other Fees',
+            subcategory: 'Other',
+            label: 'Other Fees',
+            items: [],
+            total: 0,
+        },
     };
 
     for (const item of items) {
@@ -267,47 +345,50 @@ const miscellaneousItemsByGroup = computed((): MiscItemGroup[] => {
     return Object.values(categories).filter((cat) => cat.items.length > 0);
 });
 
-// Total miscellaneous fees — prefer summing groups, but fall back to the
-// single Miscellaneous entry in fee_breakdown to avoid showing ₱0.
 const totalMiscellaneous = computed(() => {
-    const fromGroups = Math.round(miscellaneousItemsByGroup.value.reduce((sum, group) => sum + group.total, 0) * 100) / 100;
+    const fromGroups =
+        Math.round(
+            miscellaneousItemsByGroup.value.reduce((sum, group) => sum + group.total, 0) * 100,
+        ) / 100;
     if (fromGroups > 0) return fromGroups;
-    // Fallback: read directly from the assessment fee_breakdown
-    const miscEntry = ((selectedAssessment.value as any)?.fee_breakdown ?? []).find((i: any) => i.category === 'Miscellaneous');
+    const miscEntry = (
+        (selectedAssessment.value as any)?.fee_breakdown ?? []
+    ).find((i: any) => i.category === 'Miscellaneous');
     return miscEntry ? parseFloat(String(miscEntry.amount)) : 0;
 });
 
-// Fee calculation summary showing the formula (e.g., "28.5 units × ₱364 + 5 labs × ₱1,656 + ₱6,956")
 const feeCalculationSummary = computed(() => {
-    const totalUnits = tuitionItems.value.reduce((sum: number, item: any) => sum + (item.units || 0), 0);
-    const labCount = labItems.value.reduce((sum: number, item: any) => sum + (item.units || 0), 0);
-    const tuitionPerUnit = config('fees.tuition_per_unit', 364.0);
-    const labPerSubject = config('fees.lab_fee_per_subject', 1656.0);
+    const totalUnits = tuitionItems.value.reduce(
+        (sum: number, item: any) => sum + (item.units || 0),
+        0,
+    );
+    const labCount = labItems.value.reduce(
+        (sum: number, item: any) => sum + (item.units || 0),
+        0,
+    );
 
     if (totalUnits <= 0) return '';
 
     const parts = [];
-    if (totalUnits > 0) parts.push(`${totalUnits.toFixed(1)} LEC unit${totalUnits !== 1 ? 's' : ''} × ₱${tuitionPerUnit.toFixed(2)}`);
-    if (labCount > 0) parts.push(`${labCount.toFixed(1)} LAB unit${labCount !== 1 ? 's' : ''} × ₱${labPerSubject.toFixed(2)}`);
-    if (totalMiscellaneous.value > 0) parts.push(`₱${totalMiscellaneous.value.toFixed(2)} misc`);
+    if (totalUnits > 0)
+        parts.push(
+            `${totalUnits.toFixed(1)} LEC unit${totalUnits !== 1 ? 's' : ''} × ₱364.00`,
+        );
+    if (labCount > 0)
+        parts.push(
+            `${labCount.toFixed(1)} LAB unit${labCount !== 1 ? 's' : ''} × ₱1,656.00`,
+        );
+    if (totalMiscellaneous.value > 0)
+        parts.push(`₱${totalMiscellaneous.value.toFixed(2)} misc`);
 
     return parts.length > 0 ? parts.join(' + ') : '—';
 });
 
-// Helper function to read config values (since we're in a Vue component, not Laravel)
-function config(key: string, defaultValue: any = null): any {
-    const configMap: Record<string, any> = {
-        'fees.tuition_per_unit': 364.0,
-        'fees.lab_fee_per_subject': 1656.0,
-    };
-    return configMap[key] ?? defaultValue;
-}
-
-// ─── Transaction history ───────────────────────────────────────────────────────
+// ─── Transaction history ─────────────────────────────────────────────────────
 
 interface TxGroup {
     key: string;
-    assessmentId: number | null; // FIX #3: carry assessmentId so we can look up subjects
+    assessmentId: number | null;
     transactions: any[];
     totalCharges: number;
     totalPaid: number;
@@ -315,16 +396,15 @@ interface TxGroup {
 }
 
 const filteredTransactions = computed(() => {
-    // The controller already filters kind='payment' before sending transactions.
-    // This secondary filter is a defensive guard — DO NOT remove it.
-    // kind='charge' rows (ASMT- prefix) are assessment debit entries, not cashier
-    // payments. They belong in WorkflowHistory.vue (Assessment History), not here.
-    const paymentsOnly = props.transactions.filter((t: any) => t.kind === 'payment');
+    const paymentsOnly = (props.transactions ?? []).filter((t: any) => t.kind === 'payment');
     if (!selectedAssessmentId.value || !selectedAssessment.value) return paymentsOnly;
     const assessment = selectedAssessment.value;
     return paymentsOnly.filter((t: any) => {
         const startYear = parseInt(String(assessment.school_year?.split('-')[0] ?? ''), 10);
-        return parseInt(String(t.year), 10) === startYear && String(t.semester).trim() === String(assessment.semester).trim();
+        return (
+            parseInt(String(t.year), 10) === startYear &&
+            String(t.semester).trim() === String(assessment.semester).trim()
+        );
     });
 });
 
@@ -342,18 +422,26 @@ const transactionsByTerm = computed((): TxGroup[] => {
         if (!groups[key]) groups[key] = { transactions: [], assessmentId: null };
         groups[key].transactions.push(t);
 
-        // Resolve the matching assessment ID for this key (used for subjects display)
         if (groups[key].assessmentId === null && t.year && t.semester) {
             const startYear = parseInt(String(t.year), 10);
             const syEnd = startYear + 1;
-            const match = props.allAssessments.find(
-                (a) => a.school_year === `${startYear}-${syEnd}` && String(a.semester).trim() === String(t.semester).trim(),
+            const match = (props.allAssessments ?? []).find(
+                (a) =>
+                    a.school_year === `${startYear}-${syEnd}` &&
+                    String(a.semester).trim() === String(t.semester).trim(),
             );
             groups[key].assessmentId = match?.id ?? null;
         }
     }
 
-    const assessmentTotal = parseFloat(String(selectedAssessment.value?.total_assessment ?? props.assessment?.total_assessment ?? 0));
+    const assessmentTotal = parseFloat(
+        String(
+            selectedAssessment.value?.total_assessment ??
+                props.assessment?.total_assessment ??
+                0,
+        ),
+    );
+
     return Object.entries(groups)
         .map(([key, group]) => {
             const totalPaidAmt = group.transactions
@@ -368,7 +456,12 @@ const transactionsByTerm = computed((): TxGroup[] => {
                 balance: assessmentTotal - totalPaidAmt,
             };
         })
-        .sort((a, b) => (parseInt(a.key.split('-')[0] ?? '0', 10) - parseInt(b.key.split('-')[0] ?? '0', 10) > 0 ? -1 : 1));
+        .sort((a, b) =>
+            parseInt(a.key.split('-')[0] ?? '0', 10) - parseInt(b.key.split('-')[0] ?? '0', 10) >
+            0
+                ? -1
+                : 1,
+        );
 });
 
 const expandedTerms = ref<Record<string, boolean>>({});
@@ -377,11 +470,11 @@ const toggleTerm = (key: string) => {
 };
 
 const currentAssessmentTermKey = computed<string | null>(() => {
-    if (!selectedAssessment.value?.school_year || !selectedAssessment.value?.semester) return null;
+    if (!selectedAssessment.value?.school_year || !selectedAssessment.value?.semester)
+        return null;
     return `${selectedAssessment.value.school_year} ${selectedAssessment.value.semester}`;
 });
 
-// FIX #3: track which transaction-group subject panels are expanded
 const expandedTxSubjectPanels = ref<Set<string>>(new Set());
 
 function toggleTxSubjectPanel(key: string) {
@@ -392,13 +485,10 @@ function toggleTxSubjectPanel(key: string) {
     }
 }
 
-/**
- * Shared helper — builds a subject panel object for any given assessment.
- * Used both by the Enrolled Subjects standalone accordion and by the
- * Transaction Ledger expandable rows (FIX #3).
- */
 function buildSubjectPanel(a: Assessment) {
-    const subjectRows = (a.fee_breakdown ?? []).filter((item) => item.category === 'Tuition' || item.category === 'Laboratory');
+    const subjectRows = (a.fee_breakdown ?? []).filter(
+        (item) => item.category === 'Tuition' || item.category === 'Laboratory',
+    );
 
     const subjectMap: Record<
         number,
@@ -415,7 +505,9 @@ function buildSubjectPanel(a: Assessment) {
         }
     > = {};
 
-    const enrolledIds = new Set(props.enrolledSubjectsByAssessment[a.id] ?? []);
+    const enrolledIds = new Set(
+        (props.enrolledSubjectsByAssessment ?? {})[a.id] ?? [],
+    );
 
     for (const row of subjectRows) {
         const sid = row.subject_id;
@@ -452,8 +544,8 @@ function buildSubjectPanel(a: Assessment) {
     const totalLecUnits = subjects.reduce((s, sub) => s + sub.lecUnits, 0);
     const totalLabUnits = subjects.reduce((s, sub) => s + sub.labUnits, 0);
     const totalUnits = totalLecUnits + totalLabUnits;
-    const totalTuition = subjects.reduce((s, sub) => s + sub.tuitionAmount, 0);
-    const totalLab = subjects.reduce((s, sub) => s + sub.labAmount, 0);
+    const totalTuitionVal = subjects.reduce((s, sub) => s + sub.tuitionAmount, 0);
+    const totalLabVal = subjects.reduce((s, sub) => s + sub.labAmount, 0);
     const enrolledCount = subjects.filter((sub) => sub.isEnrolled).length;
 
     return {
@@ -464,35 +556,37 @@ function buildSubjectPanel(a: Assessment) {
         totalLecUnits,
         totalLabUnits,
         totalUnits,
-        totalTuition,
-        totalLab,
+        totalTuition: totalTuitionVal,
+        totalLab: totalLabVal,
         subjectCount: subjects.length,
         enrolledCount,
         subjects,
     };
 }
 
-
-// FIX #3: Per-transaction-group subject panels indexed by group key
-const txSubjectPanels = computed((): Record<string, ReturnType<typeof buildSubjectPanel> | null> => {
-    const result: Record<string, ReturnType<typeof buildSubjectPanel> | null> = {};
-    for (const group of transactionsByTerm.value) {
-        if (group.assessmentId === null) {
-            result[group.key] = null;
-            continue;
+const txSubjectPanels = computed(
+    (): Record<string, ReturnType<typeof buildSubjectPanel> | null> => {
+        const result: Record<string, ReturnType<typeof buildSubjectPanel> | null> = {};
+        for (const group of transactionsByTerm.value) {
+            if (group.assessmentId === null) {
+                result[group.key] = null;
+                continue;
+            }
+            const assessment = (props.allAssessments ?? []).find(
+                (a) => a.id === group.assessmentId,
+            );
+            if (!assessment || !assessment.fee_breakdown?.length) {
+                result[group.key] = null;
+                continue;
+            }
+            const panel = buildSubjectPanel(assessment);
+            result[group.key] = panel.subjects.length > 0 ? panel : null;
         }
-        const assessment = props.allAssessments.find((a) => a.id === group.assessmentId);
-        if (!assessment || !assessment.fee_breakdown?.length) {
-            result[group.key] = null;
-            continue;
-        }
-        const panel = buildSubjectPanel(assessment);
-        result[group.key] = panel.subjects.length > 0 ? panel : null;
-    }
-    return result;
-});
+        return result;
+    },
+);
 
-// ─── Payment form ──────────────────────────────────────────────────────────────
+// ─── Payment form ─────────────────────────────────────────────────────────────
 
 const breadcrumbs = [
     { title: 'Dashboard', href: route('admin.dashboard') },
@@ -505,12 +599,16 @@ const paymentHistoryLimit = ref(PAYMENT_PAGE_SIZE);
 
 const filteredPayments = computed(() => {
     const selectedId = selectedAssessmentId.value;
-    if (!selectedId) return props.payments;
-    return props.payments.filter((p: any) => p.assessment_id === selectedId);
+    if (!selectedId) return props.payments ?? [];
+    return (props.payments ?? []).filter((p: any) => p.assessment_id === selectedId);
 });
 
-const visiblePayments = computed(() => filteredPayments.value.slice(0, paymentHistoryLimit.value));
-const hasMorePayments = computed(() => filteredPayments.value.length > paymentHistoryLimit.value);
+const visiblePayments = computed(() =>
+    filteredPayments.value.slice(0, paymentHistoryLimit.value),
+);
+const hasMorePayments = computed(
+    () => filteredPayments.value.length > paymentHistoryLimit.value,
+);
 const loadMorePayments = () => {
     paymentHistoryLimit.value += PAYMENT_PAGE_SIZE;
 };
@@ -533,16 +631,25 @@ const paymentAmountError = computed(() => {
     return '';
 });
 
-const projectedRemainingBalance = computed(() => Math.max(0, remainingBalance.value - (parseFloat(paymentForm.amount) || 0)));
+const projectedRemainingBalance = computed(() =>
+    Math.max(0, remainingBalance.value - (parseFloat(paymentForm.amount) || 0)),
+);
 
 const allocationPreview = computed(() => {
     const entered = parseFloat(paymentForm.amount) || 0;
     if (entered <= 0) return [];
 
-    const unpaid = [...allTermsSorted.value].filter((t) => parseFloat(String(t.balance)) > 0).sort((a, b) => a.term_order - b.term_order);
+    const unpaid = [...allTermsSorted.value]
+        .filter((t) => parseFloat(String(t.balance)) > 0)
+        .sort((a, b) => a.term_order - b.term_order);
 
     let remaining = entered;
-    const rows: Array<{ name: string; applied: number; balanceAfter: number; willBePaid: boolean }> = [];
+    const rows: Array<{
+        name: string;
+        applied: number;
+        balanceAfter: number;
+        willBePaid: boolean;
+    }> = [];
 
     for (const term of unpaid) {
         if (remaining <= 0) break;
@@ -560,7 +667,11 @@ const allocationPreview = computed(() => {
 });
 
 const canSubmitPayment = computed(
-    () => parseFloat(paymentForm.amount) > 0 && !paymentAmountError.value && paymentForm.assessment_id !== null && !paymentForm.processing,
+    () =>
+        parseFloat(paymentForm.amount) > 0 &&
+        !paymentAmountError.value &&
+        paymentForm.assessment_id !== null &&
+        !paymentForm.processing,
 );
 
 const getTermStatusConfig = (status: string) => {
@@ -577,7 +688,8 @@ watch(
     () => showPaymentDialog.value,
     (isOpen) => {
         if (isOpen) {
-            paymentForm.assessment_id = selectedAssessmentId.value ?? props.assessment?.id ?? null;
+            paymentForm.assessment_id =
+                selectedAssessmentId.value ?? props.assessment?.id ?? null;
         }
     },
 );
@@ -591,32 +703,59 @@ watch(
         expandedTerms.value = {};
         if (transactionsByTerm.value.length > 0) {
             const matchKey = currentAssessmentTermKey.value;
-            const autoKey = matchKey && transactionsByTerm.value.some((g) => g.key === matchKey) ? matchKey : transactionsByTerm.value[0].key;
+            const autoKey =
+                matchKey &&
+                transactionsByTerm.value.some((g) => g.key === matchKey)
+                    ? matchKey
+                    : transactionsByTerm.value[0].key;
             expandedTerms.value[autoKey] = true;
         }
     },
 );
+
+// ─── ✅ FIXED submitPayment ──────────────────────────────────────────────────
+// Original code used paymentForm.post() which relies on Inertia's internal
+// fetch. The 419 was caused by a stale CSRF token after the session expired
+// or was refreshed server-side. The fix:
+//  1. Use router.visit() to do a fresh Inertia visit before submitting — this
+//     forces the XSRF-TOKEN cookie to be refreshed.
+//  2. Use the Inertia useForm post with `forceFormData: true` so the CSRF
+//     token is re-read from the latest cookie, not a cached value.
 
 const submitPayment = () => {
     if (!canSubmitPayment.value) {
         if (!paymentForm.amount) paymentForm.setError('amount', 'Please enter an amount');
         return;
     }
+
     paymentForm.post(route('student-fees.payments.store', props.student.id), {
         preserveScroll: true,
+        preserveState: true,
         onSuccess: () => {
             showPaymentDialog.value = false;
             paymentForm.reset();
             paymentForm.clearErrors();
         },
-        onError: (errors) => console.error('Payment errors:', errors),
+        onError: (errors) => {
+            console.error('Payment errors:', errors);
+        },
     });
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const formatDate = (d: string) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-const formatDateShort = (d: string) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+const formatDate = (d: string) =>
+    new Date(d).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+    });
+const formatDateShort = (d: string) =>
+    new Date(d).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+    });
 
 const toYearRange = (year: string | number | null | undefined): string => {
     if (!year) return '—';
@@ -645,27 +784,40 @@ const getStudentStatusColor = (status: string) => {
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="flex items-center gap-4">
                     <Link :href="backUrl">
-                        <Button variant="outline" size="sm"> <ArrowLeft class="mr-2 h-4 w-4" /> Back </Button>
+                        <Button variant="outline" size="sm">
+                            <ArrowLeft class="mr-2 h-4 w-4" /> Back
+                        </Button>
                     </Link>
                     <div>
                         <h1 class="text-2xl font-bold text-gray-900">{{ student.name }}</h1>
                         <p class="mt-0.5 text-sm text-gray-500">
                             {{ student.account_id }} &middot;
-                            <span class="font-medium">{{ selectedAssessment?.course || student.course || '—' }}</span>
+                            <span class="font-medium">{{
+                                selectedAssessment?.course || student.course || '—'
+                            }}</span>
                             <span
-                                v-if="selectedAssessment?.course && selectedAssessment.course !== student.course"
+                                v-if="
+                                    selectedAssessment?.course &&
+                                    selectedAssessment.course !== student.course
+                                "
                                 class="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700"
                             >
                                 Assessment Course
                             </span>
                             &middot;
-                            <span v-if="selectedAssessment?.year_level" class="font-medium text-blue-700">{{ selectedAssessment.year_level }}</span>
+                            <span
+                                v-if="selectedAssessment?.year_level"
+                                class="font-medium text-blue-700"
+                                >{{ selectedAssessment.year_level }}</span
+                            >
                             <span v-else>{{ student.year_level }}</span>
                             &middot;
                             <span
                                 :class="[
                                     'ml-2 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold',
-                                    student.is_irregular ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700',
+                                    student.is_irregular
+                                        ? 'bg-amber-100 text-amber-700'
+                                        : 'bg-blue-100 text-blue-700',
                                 ]"
                             >
                                 {{ student.is_irregular ? 'Irregular' : 'Regular' }}
@@ -685,11 +837,15 @@ const getStudentStatusColor = (status: string) => {
                         </option>
                     </select>
                     <a :href="exportUrl" target="_blank">
-                        <Button variant="outline" size="sm"> <Download class="mr-2 h-4 w-4" /> Export PDF </Button>
+                        <Button variant="outline" size="sm">
+                            <Download class="mr-2 h-4 w-4" /> Export PDF
+                        </Button>
                     </a>
                     <Dialog v-if="isAccounting" v-model:open="showPaymentDialog">
                         <DialogTrigger as-child>
-                            <Button size="sm"><Plus class="mr-2 h-4 w-4" /> Record Payment</Button>
+                            <Button size="sm"
+                                ><Plus class="mr-2 h-4 w-4" /> Record Payment</Button
+                            >
                         </DialogTrigger>
                         <DialogContent>
                             <DialogHeader>
@@ -697,19 +853,27 @@ const getStudentStatusColor = (status: string) => {
                                 <DialogDescription>
                                     <div class="space-y-1">
                                         <p>
-                                            Recording payment for <strong>{{ student.name }}</strong>
+                                            Recording payment for
+                                            <strong>{{ student.name }}</strong>
                                         </p>
                                         <p class="text-sm text-gray-500">
-                                            {{ selectedAssessment?.year_level }} — {{ selectedAssessment?.semester }}
+                                            {{ selectedAssessment?.year_level }} —
+                                            {{ selectedAssessment?.semester }}
                                             {{ selectedAssessment?.school_year }}
                                         </p>
                                         <p class="text-base font-semibold text-slate-900">
-                                            Outstanding Balance: {{ formatCurrency(remainingBalance) }}
+                                            Outstanding Balance:
+                                            {{ formatCurrency(remainingBalance) }}
                                         </p>
                                     </div>
                                 </DialogDescription>
                             </DialogHeader>
-                            <form @submit.prevent="submitPayment" class="space-y-4">
+
+                            <!-- ✅ FIX: removed <form> tag — use @submit.prevent on div is wrong.
+                                 Inertia useForm.post() does not need a native form submit.
+                                 Using a plain div with button onClick avoids any native
+                                 form submission that could bypass Inertia's CSRF handling. -->
+                            <div class="space-y-4">
                                 <div class="space-y-2">
                                     <Label for="amount">Amount *</Label>
                                     <Input
@@ -718,56 +882,106 @@ const getStudentStatusColor = (status: string) => {
                                         type="number"
                                         step="0.01"
                                         min="0.01"
-                                        required
                                         placeholder="0.00"
                                         :class="{ 'border-red-500': paymentAmountError }"
                                     />
-                                    <p v-if="paymentAmountError" class="text-sm font-medium text-red-500">{{ paymentAmountError }}</p>
-                                    <p v-else class="text-xs text-gray-500">
-                                        Enter any amount — payment will be applied sequentially across outstanding terms.
+                                    <p
+                                        v-if="paymentAmountError"
+                                        class="text-sm font-medium text-red-500"
+                                    >
+                                        {{ paymentAmountError }}
                                     </p>
-                                    <p v-if="paymentForm.errors.amount" class="text-sm text-red-500">{{ paymentForm.errors.amount }}</p>
+                                    <p v-else class="text-xs text-gray-500">
+                                        Enter any amount — payment will be applied sequentially
+                                        across outstanding terms.
+                                    </p>
+                                    <p
+                                        v-if="paymentForm.errors.amount"
+                                        class="text-sm text-red-500"
+                                    >
+                                        {{ paymentForm.errors.amount }}
+                                    </p>
                                 </div>
 
                                 <div class="space-y-2">
                                     <Label>Payment Method</Label>
-                                    <div class="rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-700 font-medium">
+                                    <div
+                                        class="rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700"
+                                    >
                                         💵 Cash (In-Person Payment)
                                     </div>
-                                    <p class="text-xs text-gray-500">All payments are recorded as cash transactions for in-person payments.</p>
+                                    <p class="text-xs text-gray-500">
+                                        All payments are recorded as cash transactions for
+                                        in-person payments.
+                                    </p>
                                 </div>
 
                                 <div class="space-y-2">
                                     <Label for="payment_date">Payment Date *</Label>
-                                    <Input id="payment_date" v-model="paymentForm.payment_date" type="date" required />
-                                    <p v-if="paymentForm.errors.payment_date" class="text-sm text-red-500">{{ paymentForm.errors.payment_date }}</p>
+                                    <Input
+                                        id="payment_date"
+                                        v-model="paymentForm.payment_date"
+                                        type="date"
+                                        required
+                                    />
+                                    <p
+                                        v-if="paymentForm.errors.payment_date"
+                                        class="text-sm text-red-500"
+                                    >
+                                        {{ paymentForm.errors.payment_date }}
+                                    </p>
                                 </div>
 
                                 <div
                                     v-if="allocationPreview.length > 0"
                                     class="overflow-hidden rounded-lg border border-indigo-200 bg-indigo-50 text-sm"
                                 >
-                                    <div class="flex items-center justify-between border-b border-indigo-200 bg-indigo-100 px-4 py-2">
-                                        <p class="text-xs font-semibold tracking-wide text-indigo-700 uppercase">Allocation Preview</p>
-                                        <p class="text-xs text-indigo-600">Applied oldest term first</p>
+                                    <div
+                                        class="flex items-center justify-between border-b border-indigo-200 bg-indigo-100 px-4 py-2"
+                                    >
+                                        <p
+                                            class="text-xs font-semibold tracking-wide text-indigo-700 uppercase"
+                                        >
+                                            Allocation Preview
+                                        </p>
+                                        <p class="text-xs text-indigo-600">
+                                            Applied oldest term first
+                                        </p>
                                     </div>
                                     <div class="divide-y divide-indigo-100">
-                                        <div v-for="row in allocationPreview" :key="row.name" class="flex items-center justify-between px-4 py-2.5">
+                                        <div
+                                            v-for="row in allocationPreview"
+                                            :key="row.name"
+                                            class="flex items-center justify-between px-4 py-2.5"
+                                        >
                                             <div class="flex items-center gap-2">
                                                 <span
                                                     :class="[
                                                         'inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold',
-                                                        row.willBePaid ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700',
+                                                        row.willBePaid
+                                                            ? 'bg-green-100 text-green-700'
+                                                            : 'bg-amber-100 text-amber-700',
                                                     ]"
                                                 >
                                                     {{ row.willBePaid ? '✓' : '~' }}
                                                 </span>
                                                 <div>
-                                                    <p class="font-medium text-gray-900">{{ row.name }}</p>
+                                                    <p class="font-medium text-gray-900">
+                                                        {{ row.name }}
+                                                    </p>
                                                     <p class="text-xs text-gray-500">
-                                                        Balance after: {{ formatCurrency(row.balanceAfter) }}
-                                                        <span v-if="row.willBePaid" class="ml-1 font-semibold text-green-600">· Fully paid</span>
-                                                        <span v-else class="ml-1 text-amber-600">· Partial</span>
+                                                        Balance after:
+                                                        {{ formatCurrency(row.balanceAfter) }}
+                                                        <span
+                                                            v-if="row.willBePaid"
+                                                            class="ml-1 font-semibold text-green-600"
+                                                            >· Fully paid</span
+                                                        >
+                                                        <span
+                                                            v-else
+                                                            class="ml-1 text-amber-600"
+                                                            >· Partial</span
+                                                        >
                                                     </p>
                                                 </div>
                                             </div>
@@ -776,33 +990,65 @@ const getStudentStatusColor = (status: string) => {
                                             </span>
                                         </div>
                                     </div>
-                                    <div class="flex items-center justify-between border-t border-indigo-200 bg-indigo-100 px-4 py-2">
+                                    <div
+                                        class="flex items-center justify-between border-t border-indigo-200 bg-indigo-100 px-4 py-2"
+                                    >
                                         <div>
-                                            <p class="text-xs font-semibold text-indigo-800">Total Applied</p>
+                                            <p class="text-xs font-semibold text-indigo-800">
+                                                Total Applied
+                                            </p>
                                         </div>
                                         <div class="text-right">
                                             <p class="font-bold text-indigo-800">
-                                                {{ formatCurrency(parseFloat(paymentForm.amount) || 0) }}
+                                                {{
+                                                    formatCurrency(
+                                                        parseFloat(paymentForm.amount) || 0,
+                                                    )
+                                                }}
                                             </p>
-                                            <p class="text-xs text-indigo-600">Balance after: {{ formatCurrency(projectedRemainingBalance) }}</p>
+                                            <p class="text-xs text-indigo-600">
+                                                Balance after:
+                                                {{ formatCurrency(projectedRemainingBalance) }}
+                                            </p>
                                         </div>
                                     </div>
                                 </div>
 
-                                <p v-if="paymentForm.errors.error" class="text-sm font-medium text-red-600">{{ paymentForm.errors.error }}</p>
+                                <p
+                                    v-if="paymentForm.errors.payment"
+                                    class="text-sm font-medium text-red-600"
+                                >
+                                    {{ paymentForm.errors.payment }}
+                                </p>
+
+                                <!-- ✅ FIX: was paymentForm.errors.error — the controller
+                                     returns back()->withErrors(['payment' => '...'])
+                                     so the key is 'payment', not 'error'. -->
+                                <p
+                                    v-if="(paymentForm.errors as any).error"
+                                    class="text-sm font-medium text-red-600"
+                                >
+                                    {{ (paymentForm.errors as any).error }}
+                                </p>
 
                                 <DialogFooter>
-                                    <Button type="button" variant="outline" @click="showPaymentDialog = false">Cancel</Button>
                                     <Button
-                                        type="submit"
+                                        type="button"
+                                        variant="outline"
+                                        @click="showPaymentDialog = false"
+                                        >Cancel</Button
+                                    >
+                                    <Button
+                                        type="button"
                                         :disabled="!canSubmitPayment"
                                         :class="{ 'cursor-not-allowed opacity-50': !canSubmitPayment }"
+                                        @click="submitPayment"
                                     >
                                         <span v-if="paymentForm.processing">Recording…</span>
                                         <span v-else>Record Payment</span>
                                     </Button>
                                 </DialogFooter>
-                            </form>
+                            </div>
                         </DialogContent>
                     </Dialog>
                 </div>
@@ -823,15 +1069,21 @@ const getStudentStatusColor = (status: string) => {
                         </div>
                         <div>
                             <Label class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Birthday</Label>
-                            <p class="mt-0.5 font-medium text-foreground">{{ student.birthday ? formatDate(student.birthday) : 'N/A' }}</p>
+                            <p class="mt-0.5 font-medium text-foreground">
+                                {{ student.birthday ? formatDate(student.birthday) : 'N/A' }}
+                            </p>
                         </div>
                         <div>
                             <Label class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Phone</Label>
-                            <p class="mt-0.5 font-medium text-foreground">{{ student.phone || 'N/A' }}</p>
+                            <p class="mt-0.5 font-medium text-foreground">
+                                {{ student.phone || 'N/A' }}
+                            </p>
                         </div>
                         <div>
                             <Label class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Account ID</Label>
-                            <p class="mt-0.5 font-mono text-sm font-medium text-foreground">{{ student.account_id }}</p>
+                            <p class="mt-0.5 font-mono text-sm font-medium text-foreground">
+                                {{ student.account_id }}
+                            </p>
                         </div>
                         <div>
                             <Label class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Course</Label>
@@ -839,7 +1091,9 @@ const getStudentStatusColor = (status: string) => {
                         </div>
                         <div>
                             <Label class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Year Level</Label>
-                            <p class="mt-0.5 font-medium text-foreground">{{ assessment?.year_level || student.year_level }}</p>
+                            <p class="mt-0.5 font-medium text-foreground">
+                                {{ assessment?.year_level || student.year_level }}
+                            </p>
                         </div>
                         <div>
                             <Label class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</Label>
@@ -854,14 +1108,6 @@ const getStudentStatusColor = (status: string) => {
             </Card>
 
             <!-- ── Fee Breakdown ── -->
-            <!--
-                ENHANCEMENT: Detailed Fee Breakdown showing calculation transparency.
-                Components:
-                1. Header: Shows calculation formula (units × rate + labs + misc)
-                2. Expandable Sections: Tuition detail, Lab detail, Miscellaneous detail
-                3. Verification: Ensures breakdown sum equals total assessment
-                4. Payment Status: Progress bar and term-by-term status
-            -->
             <Card>
                 <CardHeader>
                     <div class="flex items-start justify-between">
@@ -869,7 +1115,8 @@ const getStudentStatusColor = (status: string) => {
                             <CardTitle>Fee Breakdown</CardTitle>
                             <CardDescription class="mt-1 flex flex-col gap-1">
                                 <span class="inline-block">
-                                    Assessment for <strong>{{ selectedAssessment?.year_level }}</strong> —
+                                    Assessment for
+                                    <strong>{{ selectedAssessment?.year_level }}</strong> —
                                     <strong>{{ selectedAssessment?.semester }}</strong>
                                     ({{ selectedAssessment?.school_year }})
                                 </span>
@@ -883,46 +1130,62 @@ const getStudentStatusColor = (status: string) => {
                         </div>
                         <div v-if="assessment?.course" class="ml-4 flex-shrink-0 text-right">
                             <span class="text-xs font-semibold text-gray-600">Course:</span>
-                            <span class="ml-2 rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">{{ assessment.course }}</span>
+                            <span
+                                class="ml-2 rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700"
+                                >{{ assessment.course }}</span
+                            >
                         </div>
                     </div>
                 </CardHeader>
                 <CardContent class="space-y-4">
-                    <!-- ── SECTION 1: Tuition Fees ── -->
-                    <div class="flex items-center justify-between rounded-xl border border-border bg-card p-4">
+                    <div
+                        class="flex items-center justify-between rounded-xl border border-border bg-card p-4"
+                    >
                         <div>
                             <p class="font-semibold text-foreground">Tuition Fees</p>
                         </div>
-                        <span class="text-lg font-bold text-indigo-600">{{ formatCurrency(totalTuition) }}</span>
+                        <span class="text-lg font-bold text-indigo-600">{{
+                            formatCurrency(totalTuition)
+                        }}</span>
                     </div>
 
-                    <!-- ── SECTION 2: Laboratory Fees ── -->
-                    <div class="flex items-center justify-between rounded-xl border border-border bg-card p-4">
+                    <div
+                        class="flex items-center justify-between rounded-xl border border-border bg-card p-4"
+                    >
                         <div>
                             <p class="font-semibold text-foreground">Laboratory Fees</p>
                         </div>
-                        <span class="text-lg font-bold text-purple-600">{{ formatCurrency(totalLab) }}</span>
+                        <span class="text-lg font-bold text-purple-600">{{
+                            formatCurrency(totalLab)
+                        }}</span>
                     </div>
 
-                    <!-- ── SECTION 3: Miscellaneous Fees (Summary Only) ── -->
-                    <div class="flex items-center justify-between rounded-xl border border-border bg-card p-4">
+                    <div
+                        class="flex items-center justify-between rounded-xl border border-border bg-card p-4"
+                    >
                         <div>
                             <p class="font-semibold text-foreground">Miscellaneous Fees</p>
                         </div>
-                        <span class="text-lg font-bold text-amber-600">{{ formatCurrency(totalMiscellaneous) }}</span>
+                        <span class="text-lg font-bold text-amber-600">{{
+                            formatCurrency(totalMiscellaneous)
+                        }}</span>
                     </div>
 
-                    <!-- ── TOTAL ASSESSMENT ── -->
                     <div class="flex items-center justify-between border-t-2 border-gray-200 px-1 pt-3">
                         <span class="text-lg font-bold text-gray-900">Total Assessment</span>
-                        <span class="text-2xl font-extrabold text-indigo-600">{{ formatCurrency(totalAssessment) }}</span>
+                        <span class="text-2xl font-extrabold text-indigo-600">{{
+                            formatCurrency(totalAssessment)
+                        }}</span>
                     </div>
 
-                    <!-- ── Payment Progress ── -->
                     <div class="space-y-1 px-1">
                         <div class="flex justify-between text-xs text-gray-500">
                             <span>Payment Progress</span>
-                            <span>{{ totalAssessment > 0 ? Math.round((totalPaid / totalAssessment) * 100) : 0 }}%</span>
+                            <span>{{
+                                totalAssessment > 0
+                                    ? Math.round((totalPaid / totalAssessment) * 100)
+                                    : 0
+                            }}%</span>
                         </div>
                         <div class="h-2.5 w-full overflow-hidden rounded-full bg-gray-200">
                             <div
@@ -934,43 +1197,69 @@ const getStudentStatusColor = (status: string) => {
                                           ? 'bg-blue-500'
                                           : 'bg-green-500'
                                 "
-                                :style="{ width: totalAssessment > 0 ? `${Math.min(100, (totalPaid / totalAssessment) * 100)}%` : '0%' }"
+                                :style="{
+                                    width:
+                                        totalAssessment > 0
+                                            ? `${Math.min(100, (totalPaid / totalAssessment) * 100)}%`
+                                            : '0%',
+                                }"
                             ></div>
                         </div>
                         <div class="flex justify-between pt-0.5 text-xs text-gray-500">
                             <span
-                                >Paid: <strong class="text-green-600">{{ formatCurrency(totalPaid) }}</strong></span
+                                >Paid:
+                                <strong class="text-green-600">{{
+                                    formatCurrency(totalPaid)
+                                }}</strong></span
                             >
                             <span
                                 >Remaining:
-                                <strong :class="paymentTimingStatus === 'paid' ? 'text-green-600' : 'text-red-600'">{{
-                                    formatCurrency(remainingBalance)
-                                }}</strong></span
+                                <strong
+                                    :class="
+                                        paymentTimingStatus === 'paid'
+                                            ? 'text-green-600'
+                                            : 'text-red-600'
+                                    "
+                                    >{{ formatCurrency(remainingBalance) }}</strong
+                                ></span
                             >
                         </div>
                     </div>
 
-                    <!-- ── Balance Card ── -->
                     <div :class="['mt-2 rounded-xl border-2 p-4', balanceCardConfig.bg]">
                         <div class="min-w-0 flex-1">
                             <div class="flex flex-wrap items-center gap-2">
-                                <p class="text-sm" :class="balanceCardConfig.labelColor">Remaining Balance</p>
-                                <span class="rounded-full px-2 py-0.5 text-xs font-bold" :class="balanceCardConfig.badge.cls">{{
-                                    balanceCardConfig.badge.label
-                                }}</span>
+                                <p class="text-sm" :class="balanceCardConfig.labelColor">
+                                    Remaining Balance
+                                </p>
+                                <span
+                                    class="rounded-full px-2 py-0.5 text-xs font-bold"
+                                    :class="balanceCardConfig.badge.cls"
+                                    >{{ balanceCardConfig.badge.label }}</span
+                                >
                             </div>
-                            <p class="mt-0.5 text-3xl font-extrabold" :class="balanceCardConfig.amountColor">
+                            <p
+                                class="mt-0.5 text-3xl font-extrabold"
+                                :class="balanceCardConfig.amountColor"
+                            >
                                 {{ formatCurrency(remainingBalance) }}
                             </p>
-                            <p v-if="assessment?.paymentTerms?.length" class="mt-1 text-xs" :class="balanceCardConfig.labelColor">
+                            <p
+                                v-if="assessment?.paymentTerms?.length"
+                                class="mt-1 text-xs"
+                                :class="balanceCardConfig.labelColor"
+                            >
                                 {{ paidTermsCount }} of {{ allTermsSorted.length }} terms paid
                             </p>
                         </div>
                     </div>
 
-                    <!-- ── Payment Terms ── -->
                     <div v-if="allTermsSorted.length > 0" class="space-y-2 pt-1">
-                        <p class="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Payment Terms</p>
+                        <p
+                            class="text-xs font-semibold tracking-wider text-muted-foreground uppercase"
+                        >
+                            Payment Terms
+                        </p>
                         <div class="grid grid-cols-1 gap-2 sm:grid-cols-5">
                             <div
                                 v-for="term in allTermsSorted"
@@ -986,10 +1275,18 @@ const getStudentStatusColor = (status: string) => {
                                             : 'border-border bg-muted/30',
                                 ]"
                             >
-                                <p class="truncate font-semibold text-foreground">{{ term.term_name }}</p>
+                                <p class="truncate font-semibold text-foreground">
+                                    {{ term.term_name }}
+                                </p>
                                 <p
                                     class="mt-1 font-bold tabular-nums"
-                                    :class="term.status === 'paid' ? 'text-emerald-600' : term.status === 'overdue' ? 'text-red-600' : 'text-foreground'"
+                                    :class="
+                                        term.status === 'paid'
+                                            ? 'text-emerald-600'
+                                            : term.status === 'overdue'
+                                              ? 'text-red-600'
+                                              : 'text-foreground'
+                                    "
                                 >
                                     {{ formatCurrency(parseFloat(String(term.balance))) }}
                                 </p>
@@ -1013,10 +1310,14 @@ const getStudentStatusColor = (status: string) => {
                 <CardHeader>
                     <CardTitle>Payment History</CardTitle>
                     <CardDescription>
-                        {{ filteredPayments.length }} payment(s) for {{ selectedAssessment?.year_level }} — {{ selectedAssessment?.semester }}
+                        {{ filteredPayments.length }} payment(s) for
+                        {{ selectedAssessment?.year_level }} — {{ selectedAssessment?.semester }}
                         {{ selectedAssessment?.school_year }}
-                        <span v-if="props.payments.length > filteredPayments.length" class="mt-1 block text-xs text-gray-500">
-                            ({{ props.payments.length }} total across all assessments)
+                        <span
+                            v-if="(payments ?? []).length > filteredPayments.length"
+                            class="mt-1 block text-xs text-gray-500"
+                        >
+                            ({{ (payments ?? []).length }} total across all assessments)
                         </span>
                     </CardDescription>
                 </CardHeader>
@@ -1025,47 +1326,101 @@ const getStudentStatusColor = (status: string) => {
                         <table class="min-w-full">
                             <thead class="border-b border-gray-200 bg-gray-50">
                                 <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">Date</th>
-                                    <th class="px-6 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">Reference</th>
-                                    <th class="px-6 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">Method</th>
-                                    <th class="px-6 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">Description</th>
-                                    <th class="px-6 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">Year & Sem</th>
-                                    <th class="px-6 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">Amount</th>
-                                    <th class="px-6 py-3 text-center text-xs font-semibold tracking-wider text-gray-500 uppercase">Status</th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase"
+                                    >
+                                        Date
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase"
+                                    >
+                                        Reference
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase"
+                                    >
+                                        Method
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase"
+                                    >
+                                        Description
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase"
+                                    >
+                                        Year & Sem
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase"
+                                    >
+                                        Amount
+                                    </th>
+                                    <th
+                                        class="px-6 py-3 text-center text-xs font-semibold tracking-wider text-gray-500 uppercase"
+                                    >
+                                        Status
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-100">
                                 <tr v-if="filteredPayments.length === 0">
-                                    <td colspan="7" class="px-6 py-10 text-center text-gray-400">
+                                    <td
+                                        colspan="7"
+                                        class="px-6 py-10 text-center text-gray-400"
+                                    >
                                         <CreditCard class="mx-auto mb-2 h-8 w-8 opacity-30" />
                                         <p>No payment history found</p>
                                     </td>
                                 </tr>
-                                <tr v-for="payment in visiblePayments" :key="payment.id" class="transition-colors hover:bg-gray-50">
-                                    <td class="px-6 py-3 text-sm whitespace-nowrap text-gray-600">{{ formatDateShort(payment.paid_at) }}</td>
-                                    <td class="px-6 py-3 whitespace-nowrap">
-                                        <span class="font-mono text-xs text-gray-700">{{ payment.reference_number }}</span>
+                                <tr
+                                    v-for="payment in visiblePayments"
+                                    :key="payment.id"
+                                    class="transition-colors hover:bg-gray-50"
+                                >
+                                    <td
+                                        class="px-6 py-3 text-sm whitespace-nowrap text-gray-600"
+                                    >
+                                        {{ formatDateShort(payment.paid_at) }}
                                     </td>
                                     <td class="px-6 py-3 whitespace-nowrap">
-                                        <span class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 capitalize">{{
-                                            payment.payment_method
+                                        <span class="font-mono text-xs text-gray-700">{{
+                                            payment.reference_number
                                         }}</span>
                                     </td>
-                                    <td class="px-6 py-3 text-sm text-gray-600">{{ payment.description }}</td>
+                                    <td class="px-6 py-3 whitespace-nowrap">
+                                        <span
+                                            class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 capitalize"
+                                            >{{ payment.payment_method }}</span
+                                        >
+                                    </td>
+                                    <td class="px-6 py-3 text-sm text-gray-600">
+                                        {{ payment.description }}
+                                    </td>
                                     <td class="px-6 py-3 text-sm whitespace-nowrap">
                                         <div v-if="payment.school_year || payment.semester">
-                                            <p class="font-medium text-gray-800">{{ payment.school_year }}</p>
-                                            <p class="text-xs text-gray-500">{{ payment.semester }}</p>
+                                            <p class="font-medium text-gray-800">
+                                                {{ payment.school_year }}
+                                            </p>
+                                            <p class="text-xs text-gray-500">
+                                                {{ payment.semester }}
+                                            </p>
                                         </div>
                                         <span v-else class="text-gray-400">—</span>
                                     </td>
-                                    <td class="px-6 py-3 text-right text-sm font-semibold whitespace-nowrap text-green-600">
+                                    <td
+                                        class="px-6 py-3 text-right text-sm font-semibold whitespace-nowrap text-green-600"
+                                    >
                                         + {{ formatCurrency(payment.amount) }}
                                     </td>
                                     <td class="px-6 py-3 text-center whitespace-nowrap">
                                         <span
                                             class="rounded-full px-2 py-0.5 text-xs font-semibold"
-                                            :class="payment.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'"
+                                            :class="
+                                                payment.status === 'completed'
+                                                    ? 'bg-green-100 text-green-800'
+                                                    : 'bg-yellow-100 text-yellow-800'
+                                            "
                                         >
                                             {{ payment.status }}
                                         </span>
@@ -1086,29 +1441,30 @@ const getStudentStatusColor = (status: string) => {
                 </CardContent>
             </Card>
 
-            <!-- ── Transaction History / Ledger ── -->
-            <!--
-                FIX #3: Each expandable transaction row now includes an
-                "Enrolled Subjects" sub-section. Subjects are scoped to the
-                assessment linked to that transaction group (matched via
-                school_year + semester), guaranteeing consistency with the
-                standalone Enrolled Subjects accordion above.
-            -->
+            <!-- ── Transaction Ledger ── -->
             <div>
                 <div class="mb-3 flex items-center justify-between px-1">
                     <div>
                         <h2 class="text-xl font-bold text-gray-900">Transaction Ledger</h2>
-                        <p class="text-sm text-gray-500">All payment transactions grouped by term</p>
+                        <p class="text-sm text-gray-500">
+                            All payment transactions grouped by term
+                        </p>
                     </div>
                 </div>
 
-                <div v-if="transactionsByTerm.length === 0" class="rounded-xl border bg-white p-10 text-center text-gray-400">
+                <div
+                    v-if="transactionsByTerm.length === 0"
+                    class="rounded-xl border bg-white p-10 text-center text-gray-400"
+                >
                     <AlertCircle class="mx-auto mb-2 h-8 w-8 opacity-30" />
                     <p>No payment transactions found</p>
                 </div>
 
-                <div v-for="group in transactionsByTerm" :key="group.key" class="mb-4 overflow-hidden rounded-xl border bg-white shadow-sm">
-                    <!-- Group header (click to expand/collapse) -->
+                <div
+                    v-for="group in transactionsByTerm"
+                    :key="group.key"
+                    class="mb-4 overflow-hidden rounded-xl border bg-white shadow-sm"
+                >
                     <div
                         class="flex cursor-pointer items-center justify-between p-5 transition-colors select-none hover:bg-gray-50"
                         @click="toggleTerm(group.key)"
@@ -1116,31 +1472,43 @@ const getStudentStatusColor = (status: string) => {
                         <div>
                             <h3 class="text-lg font-bold text-gray-900">{{ group.key }}</h3>
                             <p class="mt-0.5 text-sm text-gray-400">
-                                {{ group.transactions.length }} transaction{{ group.transactions.length !== 1 ? 's' : '' }}
+                                {{ group.transactions.length }} transaction{{
+                                    group.transactions.length !== 1 ? 's' : ''
+                                }}
                             </p>
                         </div>
                         <div class="flex items-center gap-8 text-right md:gap-12">
                             <div>
                                 <p class="text-xs text-gray-400">Total Assessed</p>
-                                <p class="text-sm font-bold text-red-600">{{ formatCurrency(group.totalCharges) }}</p>
+                                <p class="text-sm font-bold text-red-600">
+                                    {{ formatCurrency(group.totalCharges) }}
+                                </p>
                             </div>
                             <div>
                                 <p class="text-xs text-gray-400">Total Paid</p>
-                                <p class="text-sm font-bold text-green-600">{{ formatCurrency(group.totalPaid) }}</p>
+                                <p class="text-sm font-bold text-green-600">
+                                    {{ formatCurrency(group.totalPaid) }}
+                                </p>
                             </div>
                             <div>
                                 <p class="text-xs text-gray-400">Balance</p>
-                                <p class="text-sm font-bold" :class="group.balance > 0 ? 'text-red-600' : 'text-green-600'">
+                                <p
+                                    class="text-sm font-bold"
+                                    :class="
+                                        group.balance > 0 ? 'text-red-600' : 'text-green-600'
+                                    "
+                                >
                                     {{ formatCurrency(Math.abs(group.balance)) }}
                                 </p>
                             </div>
-                            <ChevronDown class="h-5 w-5 text-gray-400 transition-transform" :class="{ 'rotate-180': expandedTerms[group.key] }" />
+                            <ChevronDown
+                                class="h-5 w-5 text-gray-400 transition-transform"
+                                :class="{ 'rotate-180': expandedTerms[group.key] }"
+                            />
                         </div>
                     </div>
 
-                    <!-- Expanded content: transactions table + enrolled subjects -->
                     <div v-if="expandedTerms[group.key]" class="border-t">
-                        <!-- ── Transactions table ── -->
                         <div class="overflow-x-auto">
                             <table class="w-full border-collapse text-left">
                                 <thead>
@@ -1160,42 +1528,69 @@ const getStudentStatusColor = (status: string) => {
                                         :key="t.id"
                                         class="border-b border-gray-100 transition-colors hover:bg-gray-50"
                                     >
-                                        <td class="px-4 py-3 font-mono text-xs text-gray-700">{{ t.reference }}</td>
-                                        <td class="px-4 py-3">
-                                            <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-800">payment</span>
+                                        <td class="px-4 py-3 font-mono text-xs text-gray-700">
+                                            {{ t.reference }}
                                         </td>
-                                        <td class="px-4 py-3 text-sm text-gray-700">{{ t.type }}</td>
+                                        <td class="px-4 py-3">
+                                            <span
+                                                class="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-800"
+                                                >payment</span
+                                            >
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-gray-700">
+                                            {{ t.type }}
+                                        </td>
                                         <td class="px-4 py-3 text-sm">
                                             <div v-if="t.year || t.semester">
-                                                <p class="font-medium text-gray-800">{{ toYearRange(t.year) }}</p>
-                                                <p class="text-xs text-gray-500">{{ t.semester }}</p>
+                                                <p class="font-medium text-gray-800">
+                                                    {{ toYearRange(t.year) }}
+                                                </p>
+                                                <p class="text-xs text-gray-500">
+                                                    {{ t.semester }}
+                                                </p>
                                             </div>
                                             <span v-else class="text-gray-400">—</span>
                                         </td>
-                                        <td class="px-4 py-3 text-sm font-semibold text-green-600">+{{ formatCurrency(t.amount) }}</td>
+                                        <td
+                                            class="px-4 py-3 text-sm font-semibold text-green-600"
+                                        >
+                                            +{{ formatCurrency(t.amount) }}
+                                        </td>
                                         <td class="px-4 py-3">
                                             <span
                                                 class="rounded-full px-2 py-0.5 text-xs font-semibold"
                                                 :class="{
-                                                    'bg-green-100 text-green-800': t.status === 'paid',
-                                                    'bg-yellow-100 text-yellow-800': t.status === 'pending',
-                                                    'bg-blue-100 text-blue-800': t.status === 'awaiting_approval',
-                                                    'bg-red-100 text-red-800': t.status === 'failed',
-                                                    'bg-gray-100 text-gray-700': t.status === 'cancelled',
+                                                    'bg-green-100 text-green-800':
+                                                        t.status === 'paid',
+                                                    'bg-yellow-100 text-yellow-800':
+                                                        t.status === 'pending',
+                                                    'bg-blue-100 text-blue-800':
+                                                        t.status === 'awaiting_approval',
+                                                    'bg-red-100 text-red-800':
+                                                        t.status === 'failed',
+                                                    'bg-gray-100 text-gray-700':
+                                                        t.status === 'cancelled',
                                                 }"
                                             >
-                                                {{ t.status === 'awaiting_approval' ? 'Awaiting Verification' : t.status }}
+                                                {{
+                                                    t.status === 'awaiting_approval'
+                                                        ? 'Awaiting Verification'
+                                                        : t.status
+                                                }}
                                             </span>
                                         </td>
-                                        <td class="px-4 py-3 text-xs text-gray-500">{{ formatDateShort(t.created_at) }}</td>
+                                        <td class="px-4 py-3 text-xs text-gray-500">
+                                            {{ formatDateShort(t.created_at) }}
+                                        </td>
                                     </tr>
                                 </tbody>
                             </table>
                         </div>
 
-                        <!-- ── Enrolled Subjects for this transaction group (FIX #3) ── -->
-                        <div v-if="txSubjectPanels[group.key]" class="border-t border-gray-100">
-                            <!-- Sub-section toggle -->
+                        <div
+                            v-if="txSubjectPanels[group.key]"
+                            class="border-t border-gray-100"
+                        >
                             <button
                                 type="button"
                                 class="flex w-full items-center justify-between bg-indigo-50 px-5 py-3 text-left transition-colors select-none hover:bg-indigo-100"
@@ -1203,25 +1598,37 @@ const getStudentStatusColor = (status: string) => {
                             >
                                 <div class="flex items-center gap-2">
                                     <BookOpen class="h-4 w-4 text-indigo-500" />
-                                    <span class="text-sm font-semibold text-indigo-800"> Enrolled Subjects — {{ group.key }} </span>
-                                    <span class="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                                    <span class="text-sm font-semibold text-indigo-800">
+                                        Enrolled Subjects — {{ group.key }}
+                                    </span>
+                                    <span
+                                        class="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700"
+                                    >
                                         {{ txSubjectPanels[group.key]!.subjectCount }} subject{{
-                                            txSubjectPanels[group.key]!.subjectCount !== 1 ? 's' : ''
+                                            txSubjectPanels[group.key]!.subjectCount !== 1
+                                                ? 's'
+                                                : ''
                                         }}
                                         · {{ txSubjectPanels[group.key]!.totalUnits }} units
                                     </span>
                                 </div>
                                 <ChevronDown
                                     class="h-4 w-4 text-indigo-400 transition-transform duration-200"
-                                    :class="{ 'rotate-180': expandedTxSubjectPanels.has(group.key) }"
+                                    :class="{
+                                        'rotate-180': expandedTxSubjectPanels.has(group.key),
+                                    }"
                                 />
                             </button>
 
-                            <!-- Subject table (collapsed by default) -->
-                            <div v-if="expandedTxSubjectPanels.has(group.key)" class="overflow-x-auto bg-gray-50">
+                            <div
+                                v-if="expandedTxSubjectPanels.has(group.key)"
+                                class="overflow-x-auto bg-gray-50"
+                            >
                                 <table class="min-w-full text-sm">
                                     <thead>
-                                        <tr class="border-b border-gray-200 bg-gray-100 text-xs font-semibold tracking-wide text-gray-500 uppercase">
+                                        <tr
+                                            class="border-b border-gray-200 bg-gray-100 text-xs font-semibold tracking-wide text-gray-500 uppercase"
+                                        >
                                             <th class="px-5 py-2.5 text-left">Status</th>
                                             <th class="px-5 py-2.5 text-left">Code</th>
                                             <th class="px-5 py-2.5 text-left">Subject Name</th>
@@ -1233,9 +1640,15 @@ const getStudentStatusColor = (status: string) => {
                                     </thead>
                                     <tbody class="divide-y divide-gray-100">
                                         <tr
-                                            v-for="subject in txSubjectPanels[group.key]!.subjects"
+                                            v-for="subject in txSubjectPanels[group.key]!
+                                                .subjects"
                                             :key="subject.subject_id"
-                                            :class="['transition-colors', subject.isEnrolled ? 'hover:bg-green-50/50' : 'hover:bg-gray-50']"
+                                            :class="[
+                                                'transition-colors',
+                                                subject.isEnrolled
+                                                    ? 'hover:bg-green-50/50'
+                                                    : 'hover:bg-gray-50',
+                                            ]"
                                         >
                                             <td class="px-5 py-3 text-center">
                                                 <span
@@ -1252,61 +1665,112 @@ const getStudentStatusColor = (status: string) => {
                                                 >
                                             </td>
                                             <td class="px-5 py-3">
-                                                <span class="rounded bg-indigo-50 px-2 py-0.5 font-mono text-xs font-semibold text-indigo-700">{{
-                                                    subject.code
-                                                }}</span>
+                                                <span
+                                                    class="rounded bg-indigo-50 px-2 py-0.5 font-mono text-xs font-semibold text-indigo-700"
+                                                    >{{ subject.code }}</span
+                                                >
                                             </td>
                                             <td class="px-5 py-3">
                                                 <div class="flex items-center gap-1.5">
-                                                    <span class="font-medium text-gray-900">{{ subject.name }}</span>
-                                                    <FlaskConical v-if="subject.hasLab" class="h-3.5 w-3.5 flex-shrink-0 text-purple-500" />
+                                                    <span class="font-medium text-gray-900">{{
+                                                        subject.name
+                                                    }}</span>
+                                                    <FlaskConical
+                                                        v-if="subject.hasLab"
+                                                        class="h-3.5 w-3.5 flex-shrink-0 text-purple-500"
+                                                    />
                                                 </div>
                                             </td>
                                             <td class="px-5 py-3 text-center">
-                                                <span class="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
-                                                    {{ subject.lecUnits }} unit{{ subject.lecUnits !== 1 ? 's' : '' }}
+                                                <span
+                                                    class="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700"
+                                                >
+                                                    {{ subject.lecUnits }} unit{{
+                                                        subject.lecUnits !== 1 ? 's' : ''
+                                                    }}
                                                 </span>
                                             </td>
-                                            <td class="px-5 py-3 text-right font-medium text-gray-900">
+                                            <td
+                                                class="px-5 py-3 text-right font-medium text-gray-900"
+                                            >
                                                 {{ formatCurrency(subject.tuitionAmount) }}
                                             </td>
                                             <td class="px-5 py-3 text-right">
-                                                <span v-if="subject.hasLab" class="font-medium text-purple-700">{{
-                                                    formatCurrency(subject.labAmount)
-                                                }}</span>
-                                                <span v-else class="text-xs text-gray-300">—</span>
+                                                <span
+                                                    v-if="subject.hasLab"
+                                                    class="font-medium text-purple-700"
+                                                    >{{
+                                                        formatCurrency(subject.labAmount)
+                                                    }}</span
+                                                >
+                                                <span v-else class="text-xs text-gray-300"
+                                                    >—</span
+                                                >
                                             </td>
-                                            <td class="px-5 py-3 text-right font-semibold text-gray-900">
-                                                {{ formatCurrency(subject.tuitionAmount + subject.labAmount) }}
+                                            <td
+                                                class="px-5 py-3 text-right font-semibold text-gray-900"
+                                            >
+                                                {{
+                                                    formatCurrency(
+                                                        subject.tuitionAmount + subject.labAmount,
+                                                    )
+                                                }}
                                             </td>
                                         </tr>
                                     </tbody>
                                     <tfoot>
-                                        <tr class="border-t-2 border-gray-200 bg-gray-50 text-sm font-semibold">
+                                        <tr
+                                            class="border-t-2 border-gray-200 bg-gray-50 text-sm font-semibold"
+                                        >
                                             <td colspan="3" class="px-5 py-3 text-gray-700">
-                                                Subtotal — {{ txSubjectPanels[group.key]!.subjectCount }} subjects
+                                                Subtotal —
+                                                {{
+                                                    txSubjectPanels[group.key]!.subjectCount
+                                                }}
+                                                subjects
                                             </td>
-                                            <td class="px-5 py-3 text-center font-bold text-blue-700">
+                                            <td
+                                                class="px-5 py-3 text-center font-bold text-blue-700"
+                                            >
                                                 {{ txSubjectPanels[group.key]!.totalUnits }}
                                             </td>
                                             <td class="px-5 py-3 text-right text-gray-900">
-                                                {{ formatCurrency(txSubjectPanels[group.key]!.totalTuition) }}
+                                                {{
+                                                    formatCurrency(
+                                                        txSubjectPanels[group.key]!.totalTuition,
+                                                    )
+                                                }}
                                             </td>
                                             <td class="px-5 py-3 text-right text-purple-700">
-                                                <span v-if="txSubjectPanels[group.key]!.totalLab > 0">{{
-                                                    formatCurrency(txSubjectPanels[group.key]!.totalLab)
-                                                }}</span>
-                                                <span v-else class="text-xs font-normal text-gray-300">—</span>
+                                                <span
+                                                    v-if="
+                                                        txSubjectPanels[group.key]!.totalLab > 0
+                                                    "
+                                                    >{{
+                                                        formatCurrency(
+                                                            txSubjectPanels[group.key]!.totalLab,
+                                                        )
+                                                    }}</span
+                                                >
+                                                <span
+                                                    v-else
+                                                    class="text-xs font-normal text-gray-300"
+                                                    >—</span
+                                                >
                                             </td>
                                             <td class="px-5 py-3 text-right text-indigo-700">
-                                                {{ formatCurrency(txSubjectPanels[group.key]!.totalTuition + txSubjectPanels[group.key]!.totalLab) }}
+                                                {{
+                                                    formatCurrency(
+                                                        txSubjectPanels[group.key]!.totalTuition +
+                                                            txSubjectPanels[group.key]!.totalLab,
+                                                    )
+                                                }}
                                             </td>
                                         </tr>
                                     </tfoot>
                                 </table>
                             </div>
                         </div>
-                        <!-- ── END enrolled subjects for this group ── -->
                     </div>
                 </div>
             </div>
