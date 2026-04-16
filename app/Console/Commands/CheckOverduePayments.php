@@ -35,7 +35,7 @@ class CheckOverduePayments extends Command
         $overdueTerms = StudentPaymentTerm::where('status', '!=', StudentPaymentTerm::STATUS_PAID)
             ->where('balance', '>', 0)
             ->where('due_date', '<', now()->toDateString())
-            ->with('user', 'assessment')
+            ->with('assessment.user')
             ->get();
         
         $this->info("Found " . $overdueTerms->count() . " overdue payment terms");
@@ -55,7 +55,7 @@ class CheckOverduePayments extends Command
                 $daysOverdue = now()->diffInDays($term->due_date);
                 
                 $reminder = PaymentReminder::create([
-                    'user_id' => $term->user_id,
+                    'user_id' => $term->assessment->user_id,
                     'student_assessment_id' => $term->student_assessment_id,
                     'student_payment_term_id' => $term->id,
                     'type' => PaymentReminder::TYPE_OVERDUE,
@@ -72,6 +72,12 @@ class CheckOverduePayments extends Command
                         'term_order' => $term->term_order,
                     ],
                 ]);
+                
+                $term->assessment->user->notify(new \App\Notifications\PaymentDueNotification(
+                    $term->term_name,
+                    (float) $term->balance,
+                    $term->due_date,
+                ));
                 
                 $remindersCreated++;
                 $this->info("Created overdue reminder for user {$term->user_id} (Term: {$term->term_name})");
@@ -99,7 +105,7 @@ class CheckOverduePayments extends Command
                 now()->toDateString(),
                 now()->addDays(3)->toDateString(),
             ])
-            ->with('user', 'assessment')
+            ->with('assessment.user')
             ->get();
         
         $this->info("Found " . $approachingTerms->count() . " terms with approaching due dates");
@@ -119,7 +125,7 @@ class CheckOverduePayments extends Command
                 $daysUntilDue = now()->diffInDays($term->due_date);
                 
                 PaymentReminder::create([
-                    'user_id' => $term->user_id,
+                    'user_id' => $term->assessment->user_id,
                     'student_assessment_id' => $term->student_assessment_id,
                     'student_payment_term_id' => $term->id,
                     'type' => PaymentReminder::TYPE_APPROACHING_DUE,
@@ -136,6 +142,12 @@ class CheckOverduePayments extends Command
                         'term_order' => $term->term_order,
                     ],
                 ]);
+                
+                $term->assessment->user->notify(new \App\Notifications\PaymentDueNotification(
+                    $term->term_name,
+                    (float) $term->balance,
+                    $term->due_date,
+                ));
                 
                 $remindersCreated++;
                 $this->info("Created approaching due reminder for user {$term->user_id} (Term: {$term->term_name})");

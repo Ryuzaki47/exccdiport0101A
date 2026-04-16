@@ -54,6 +54,12 @@ class GeneratePaymentReceivedReminder
                 'payment_amount' => $event->amount,
             ],
         ]);
+        
+        $user->notify(new \App\Notifications\PaymentDueNotification(
+            $assessment->paymentTerms()->where('balance', '>', 0)->first()?->term_name ?? 'Payment',
+            (float) $remainingBalance,
+            $assessment->paymentTerms()->where('balance', '>', 0)->first()?->due_date,
+        ));
     }
 
     private function resolveAssessment(\App\Models\User $user, int $transactionId): ?StudentAssessment

@@ -347,6 +347,13 @@ class WorkflowService
                     'transaction_id' => $transaction->id,
                     'new_status'     => $transaction->status,
                 ]);
+                
+                event(new \App\Events\PaymentRecorded(
+                    $transaction->user,
+                    $transaction->id,
+                    (float) $transaction->amount,
+                    $transaction->reference,
+                ));
 
                 // NOTIFICATION: CUSTOM ADMIN_NOTIFICATIONS
                 // Payment approval is a system event that needs role-based targeting.
