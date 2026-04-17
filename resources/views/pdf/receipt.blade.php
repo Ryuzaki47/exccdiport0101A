@@ -246,6 +246,7 @@
             Academic Term: <span>{{ $academicTerm }}</span><br>
             Payment Method: <span>{{ $method }}</span><br>
             Date Paid: <span>{{ $paidDate }}</span><br>
+            Reference No.: <span style="font-family:monospace;">{{ $transaction->reference ?? '—' }}</span><br>
             Status:
             <span class="badge badge-{{ $transaction->status === 'paid' ? 'paid' : ($transaction->status === 'awaiting_approval' ? 'awaiting' : 'pending') }}">
                 {{ $transaction->status === 'awaiting_approval' ? 'Awaiting Verification' : ucfirst($transaction->status) }}

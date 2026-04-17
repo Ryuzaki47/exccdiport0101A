@@ -4,13 +4,14 @@
     <meta charset="utf-8">
     <title>Transaction Receipt — {{ $student->account_id ?? 'Student' }}</title>
     <style>
+        @page { margin: 12mm 10mm; }
         * { box-sizing: border-box; }
         body {
             font-family: Arial, sans-serif;
-            font-size: 11px;
+            font-size: 10px;
             color: #222;
             margin: 0;
-            padding: 20px;
+            padding: 14px;
         }
 
         /* ── School Header ─────────────────────────────────── */
@@ -70,7 +71,7 @@
         table.data th,
         table.data td {
             border: 1px solid #ccc;
-            padding: 5px 7px;
+            padding: 6px 8px;
             font-size: 10px;
         }
         table.data th {

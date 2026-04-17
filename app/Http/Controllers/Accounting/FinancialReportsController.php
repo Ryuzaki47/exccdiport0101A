@@ -81,7 +81,7 @@ class FinancialReportsController extends Controller
 
         $outstandingStudents = StudentAssessment::where('school_year', $schoolYear)
             ->where('semester', $semester)
-            ->with(['user', 'paymentTerms'])
+            ->with(['user', 'user.account', 'paymentTerms'])
             ->get()
             ->map(function ($assessment) {
                 $pendingBalance = $assessment->paymentTerms
@@ -162,20 +162,21 @@ class FinancialReportsController extends Controller
         // FIX: same relationship fix applied here — student.user → user
         $students = StudentAssessment::where('school_year', $schoolYear)
             ->where('semester', $semester)
-            ->with(['user', 'paymentTerms'])
+            ->with(['user', 'user.account', 'paymentTerms'])
             ->get()
             ->map(function ($assessment) {
                 $balance = $assessment->paymentTerms->sum('balance');
                 $paid    = $assessment->total_assessment - $balance;
 
                 return [
-                    'accountId'   => $assessment->user?->account_id ?? 'N/A',
-                    'studentName' => $assessment->user?->name ?? 'Unknown Student',
-                    'course'      => $assessment->course,
-                    'total'       => (float) $assessment->total_assessment,
-                    'paid'        => (float) $paid,
-                    'balance'     => (float) $balance,
-                    'status'      => $balance > 0 ? 'Pending' : 'Paid',
+                    'accountId'     => $assessment->user?->account_id ?? 'N/A',
+                    'accountNumber' => $assessment->user?->account?->account_number ?? 'N/A',
+                    'studentName'   => $assessment->user?->name ?? 'Unknown Student',
+                    'course'        => $assessment->course,
+                    'total'         => (float) $assessment->total_assessment,
+                    'paid'          => (float) $paid,
+                    'balance'       => (float) $balance,
+                    'status'        => $balance > 0 ? 'Pending' : 'Paid',
                 ];
             })
             ->filter(fn ($s) => $s['balance'] > 0)
