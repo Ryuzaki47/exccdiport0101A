@@ -22,7 +22,7 @@ class FeeSettingsSeeder extends Seeder
             ['key' => 'lab_fee_per_subject', 'label' => 'Lab Fee per Subject', 'amount' => 1656.00, 'category' => 'rate'],
 
             // ── Miscellaneous ────────────────────────────────────────────────
-            ['key' => 'misc_registration', 'label' => 'Registration Fee', 'amount' => 0.00, 'category' => 'miscellaneous'],
+            ['key' => 'misc_registration', 'label' => 'Registration Fee', 'amount' => 600.00, 'category' => 'miscellaneous'],
             ['key' => 'misc_lms', 'label' => 'LMS Fee', 'amount' => 450.00, 'category' => 'miscellaneous'],
             ['key' => 'misc_library', 'label' => 'Library Fee', 'amount' => 450.00, 'category' => 'miscellaneous'],
             ['key' => 'misc_athletic', 'label' => 'Athletic Fee', 'amount' => 550.00, 'category' => 'miscellaneous'],

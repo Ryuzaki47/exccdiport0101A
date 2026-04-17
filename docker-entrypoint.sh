@@ -1,7 +1,4 @@
 #!/bin/bash
-# Intentionally no "set -e" — we handle errors explicitly so a transient
-# database hiccup never prevents the container from starting.
-
 exec 1>&1
 exec 2>&2
 
@@ -79,6 +76,21 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Seed fee_settings if the table is empty (idempotent — safe on re-deploy)
+# ---------------------------------------------------------------------------
+echo "💰 Checking fee_settings seed..."
+FEE_COUNT=$(php artisan tinker --no-interaction --execute="echo \App\Models\FeeSetting::count();" 2>/dev/null | tail -1)
+
+if [ "$FEE_COUNT" = "0" ] || [ -z "$FEE_COUNT" ]; then
+    echo "  → fee_settings is empty — running FeeSettingsSeeder..."
+    php artisan db:seed --class=FeeSettingsSeeder --force 2>&1 && echo "✓ FeeSettingsSeeder complete" || {
+        echo "⚠️  WARNING: FeeSettingsSeeder failed." >&2
+    }
+else
+    echo "  → fee_settings already has ${FEE_COUNT} rows — skipping seed."
+fi
+
+# ---------------------------------------------------------------------------
 # Storage link
 # ---------------------------------------------------------------------------
 echo "🔗 Creating storage link..."
@@ -92,7 +104,7 @@ OCTANE_SERVER="${OCTANE_SERVER:-frankenphp}"
 echo "✓ Setup complete! Starting Octane (${OCTANE_SERVER}) on port ${PORT:-8080}..."
 
 # ---------------------------------------------------------------------------
-# Start Octane — server driven by OCTANE_SERVER env var
+# Start Octane
 # ---------------------------------------------------------------------------
 exec php artisan octane:start \
     --server="${OCTANE_SERVER}" \
