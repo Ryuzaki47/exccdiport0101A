@@ -17,7 +17,11 @@ class StudentAssessment extends Model
         'school_year',
         'lec_units',
         'lab_units',
-        'discount_percentage',
+        'discount_type',
+        'is_taking_nstp',
+        'tuition_fee',
+        'lab_fee',
+        'misc_fee',
         'total_assessment',
         'status',
     ];
@@ -25,10 +29,14 @@ class StudentAssessment extends Model
     public const MINIMUM_UNITS = 1.5; // ₱546 floor (1.5 units × ₱364)
 
     protected $casts = [
-        'lec_units'           => 'integer',
-        'lab_units'           => 'integer',
-        'discount_percentage' => 'decimal:2',
-        'total_assessment'    => 'decimal:2',
+        'lec_units'        => 'integer',
+        'lab_units'        => 'integer',
+        'discount_type'    => 'string',
+        'is_taking_nstp'   => 'boolean',
+        'tuition_fee'      => 'decimal:2',
+        'lab_fee'          => 'decimal:2',
+        'misc_fee'         => 'decimal:2',
+        'total_assessment' => 'decimal:2',
     ];
 
     // ─── Relationships ────────────────────────────────────────────────────────
@@ -53,18 +61,12 @@ class StudentAssessment extends Model
 
     public function getTuitionFeeAttribute(): float
     {
-        $tuitionPerUnit = (float) config('fees.tuition_per_lec_unit', 364.00);
-        $fullTuition = $this->lec_units * $tuitionPerUnit;
-        $minimum = self::MINIMUM_UNITS * $tuitionPerUnit;
-        $discount = (float) ($this->discount_percentage ?? 0);
-        
-        // Apply discount: final = min + (full - min) × (1 - discount/100)
-        return round($minimum + ($fullTuition - $minimum) * (1 - $discount / 100), 2);
+        return (float) ($this->attributes['tuition_fee'] ?? 0);
     }
 
     public function getLabFeeAttribute(): float
     {
-        return $this->lab_units * (float) config('fees.lab_fee_per_unit', 1656.00);
+        return (float) ($this->attributes['lab_fee'] ?? 0);
     }
 
     public function getMiscFeeAttribute(): float

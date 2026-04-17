@@ -28,10 +28,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('student_assessments', function (Blueprint $table) {
-            $table->unsignedDecimal('discount_percentage', 5, 2)
-                ->default(0)
-                ->after('lab_subjects')
-                ->comment('Tuition discount as percentage (0-100). Stored for auditability.');
+            if (!Schema::hasColumn('student_assessments', 'discount_percentage')) {
+                $table->decimal('discount_percentage', 5, 2)
+                    ->default(0)
+                    ->after('lab_units')
+                    ->comment('Tuition discount as percentage (0-100). Stored for auditability.');
+            }
         });
     }
 

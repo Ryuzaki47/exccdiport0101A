@@ -110,12 +110,13 @@ watch(selectedStudent, async (student) => {
 // ─── Form ─────────────────────────────────────────────────────────────────────
 
 const form = useForm({
-  user_id:              props.preselectedStudent?.id ?? 0,
-  semester:             '1st' as '1st' | '2nd' | 'Summer',
-  school_year:          '',
-  lec_units:            0,
-  lab_units:            0,
-  discount_percentage:  0,
+  user_id:        props.preselectedStudent?.id ?? 0,
+  semester:       '1st' as '1st' | '2nd' | 'Summer',
+  school_year:    '',
+  lec_units:      0,
+  lab_units:      0,
+  discount_type:  'none' as 'none' | 'full' | 'nstp',
+  is_taking_nstp: false,
 })
 
 // Pre-fill school year (current AY format e.g. "2025-2026")
@@ -124,33 +125,49 @@ form.school_year  = `${currentYear}-${currentYear + 1}`
 
 // ─── Live Fee Computation ─────────────────────────────────────────────────────
 
-// Base tuition (before discount)
+// Base fees (before discount)
 const baseTuition = computed(() =>
   Number(form.lec_units) * props.feeRates.tuition_per_lec_unit
 )
 
-// Minimum tuition floor (1.5 units × rate)
-const minimumTuition = computed(() =>
-  1.5 * props.feeRates.tuition_per_lec_unit // ₱546
-)
-
-// Discounted tuition (applies minimum floor)
-const tuitionFee = computed(() => {
-  const base = baseTuition.value
-  const min = minimumTuition.value
-  const discount = Math.min(100, Math.max(0, Number(form.discount_percentage) || 0)) / 100
-  return Math.round((min + (base - min) * (1 - discount)) * 100) / 100
-})
-
-const labFee = computed(() =>
+const baseLabFee = computed(() =>
   Number(form.lab_units) * props.feeRates.lab_fee_per_unit
 )
+
+const baseMiscFee = computed(() => props.feeRates.misc_fee_fixed)
+
+// Apply discount policy
+const discountedFees = computed(() => {
+  let tuition = baseTuition.value
+  let lab = baseLabFee.value
+  let misc = baseMiscFee.value
+
+  if (form.discount_type === 'full') {
+    tuition = 0
+    lab = 0
+    misc = 0
+    // If taking NSTP, restore tuition to ₱546 + keep lab + keep misc
+    if (form.is_taking_nstp) {
+      tuition = 546 // Fixed NSTP tuition
+      lab = baseLabFee.value
+      misc = baseMiscFee.value
+    }
+  } else if (form.discount_type === 'nstp' || form.is_taking_nstp) {
+    tuition = 546 // Fixed NSTP tuition
+    lab = baseLabFee.value
+    misc = baseMiscFee.value
+  }
+
+  return { tuition, lab, misc }
+})
+
+const tuitionFee = computed(() => discountedFees.value.tuition)
+const labFee = computed(() => discountedFees.value.lab)
+const miscFee = computed(() => discountedFees.value.misc)
 
 const entrepreneurshipFee = computed(() =>
   Number(form.lab_units) > 0 ? 600 : 0
 )
-
-const miscFee = computed(() => props.feeRates.misc_fee_fixed)
 
 const totalAssessment = computed(() =>
   tuitionFee.value + labFee.value + entrepreneurshipFee.value + miscFee.value
@@ -333,50 +350,66 @@ function submit() {
             </div>
           </Card>
 
-          <!-- Discount Input -->
+          <!-- Discount Policy -->
           <Card>
             <CardHeader>
               <CardTitle class="text-base flex items-center gap-2">
-                <span class="text-yellow-600">₱</span>
-                Tuition Discount
-                <span class="ml-auto text-xs font-normal text-muted-foreground">
-                  Optional
-                </span>
+                <span class="text-amber-600">🎓</span>
+                Discount / Scholarship Policy
               </CardTitle>
             </CardHeader>
-            <CardContent class="space-y-3">
+            <CardContent class="space-y-4">
+              <!-- Discount Type -->
               <div class="space-y-1.5">
-                <Label for="discount_percentage" class="flex items-center justify-between">
-                  <span>Discount %</span>
-                  <span class="text-sm text-muted-foreground">
-                    0% = Full tuition | 100% = Minimum (₱546)
-                  </span>
-                </Label>
-                <div class="flex gap-3 items-center">
-                  <Input 
-                    id="discount_percentage" 
-                    type="number" 
-                    v-model.number="form.discount_percentage"
-                    min="0" 
-                    max="100" 
-                    step="0.01"
-                    class="text-center text-lg font-semibold" 
-                  />
-                  <span class="text-sm font-medium text-muted-foreground">%</span>
-                </div>
-                <p v-if="form.errors.discount_percentage" class="text-sm text-destructive">
-                  {{ form.errors.discount_percentage }}
+                <Label for="discount_type">Discount Type</Label>
+                <select 
+                  id="discount_type" 
+                  v-model="form.discount_type"
+                  class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="none">None (Regular student)</option>
+                  <option value="full">Full Scholarship (100% waived)</option>
+                  <option value="nstp">NSTP Waiver (tuition/lab only)</option>
+                </select>
+                <p v-if="form.errors.discount_type" class="text-sm text-destructive">
+                  {{ form.errors.discount_type }}
                 </p>
               </div>
 
-              <!-- Discount Preview -->
-              <div v-if="Number(form.lec_units) > 0" class="rounded-md bg-blue-50 p-3 space-y-1.5">
-                <div class="text-xs text-muted-foreground">Full tuition: <span class="font-semibold text-blue-900">{{ formatCurrency(baseTuition) }}</span></div>
-                <div class="text-xs text-muted-foreground">Minimum floor: <span class="font-semibold text-blue-900">{{ formatCurrency(minimumTuition) }}</span></div>
-                <div class="border-t pt-1.5 text-sm">
-                  <div class="flex justify-between">
-                    <span class="font-semibold">Final tuition:</span>
-                    <span class="font-bold text-base text-blue-900">{{ formatCurrency(tuitionFee) }}</span>
+              <!-- NSTP Checkbox -->
+              <div v-if="form.discount_type !== 'none'" class="flex items-center gap-2 p-3 rounded-md bg-amber-50">
+                <input 
+                  id="is_taking_nstp" 
+                  type="checkbox" 
+                  v-model="form.is_taking_nstp"
+                  class="rounded border border-input"
+                />
+                <Label for="is_taking_nstp" class="cursor-pointer flex-1">
+                  Student is taking NSTP
+                  <p class="text-xs text-muted-foreground mt-0.5">If selected with Full Scholarship, tuition reverts to ₱546 + lab fees charged</p>
+                </Label>
+              </div>
+
+              <!-- Preview Box -->
+              <div v-if="form.discount_type !== 'none'" class="rounded-md bg-blue-50 p-3 space-y-1.5">
+                <p class="text-xs font-semibold text-blue-900">Discount Applied:</p>
+                <div v-if="form.discount_type === 'full' && !form.is_taking_nstp" class="text-sm text-blue-900">
+                  ✓ 100% waived (₱0.00 charge)
+                </div>
+                <div v-else-if="form.discount_type === 'full' && form.is_taking_nstp" class="text-sm text-blue-900">
+                  ✓ Full waived + NSTP tuition override
+                  <div class="mt-1 text-xs">
+                    • Tuition: ₱546 (fixed)<br>
+                    • Lab: {{ formatCurrency(baseLabFee) }}<br>
+                    • Misc: {{ formatCurrency(baseMiscFee) }}
+                  </div>
+                </div>
+                <div v-else-if="form.discount_type === 'nstp'" class="text-sm text-blue-900">
+                  ✓ NSTP tuition waiver
+                  <div class="mt-1 text-xs">
+                    • Tuition: ₱546 (fixed)<br>
+                    • Lab: {{ formatCurrency(baseLabFee) }}<br>
+                    • Misc: {{ formatCurrency(baseMiscFee) }}
                   </div>
                 </div>
               </div>
