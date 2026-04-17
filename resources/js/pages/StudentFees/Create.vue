@@ -110,11 +110,12 @@ watch(selectedStudent, async (student) => {
 // ─── Form ─────────────────────────────────────────────────────────────────────
 
 const form = useForm({
-  user_id:     props.preselectedStudent?.id ?? 0,
-  semester:    '1st' as '1st' | '2nd' | 'Summer',
-  school_year: '',
-  lec_units:   0,
-  lab_units:   0,
+  user_id:              props.preselectedStudent?.id ?? 0,
+  semester:             '1st' as '1st' | '2nd' | 'Summer',
+  school_year:          '',
+  lec_units:            0,
+  lab_units:            0,
+  discount_percentage:  0,
 })
 
 // Pre-fill school year (current AY format e.g. "2025-2026")
@@ -123,18 +124,36 @@ form.school_year  = `${currentYear}-${currentYear + 1}`
 
 // ─── Live Fee Computation ─────────────────────────────────────────────────────
 
-const tuitionFee = computed(() =>
+// Base tuition (before discount)
+const baseTuition = computed(() =>
   Number(form.lec_units) * props.feeRates.tuition_per_lec_unit
 )
+
+// Minimum tuition floor (1.5 units × rate)
+const minimumTuition = computed(() =>
+  1.5 * props.feeRates.tuition_per_lec_unit // ₱546
+)
+
+// Discounted tuition (applies minimum floor)
+const tuitionFee = computed(() => {
+  const base = baseTuition.value
+  const min = minimumTuition.value
+  const discount = Math.min(100, Math.max(0, Number(form.discount_percentage) || 0)) / 100
+  return Math.round((min + (base - min) * (1 - discount)) * 100) / 100
+})
 
 const labFee = computed(() =>
   Number(form.lab_units) * props.feeRates.lab_fee_per_unit
 )
 
+const entrepreneurshipFee = computed(() =>
+  Number(form.lab_units) > 0 ? 600 : 0
+)
+
 const miscFee = computed(() => props.feeRates.misc_fee_fixed)
 
 const totalAssessment = computed(() =>
-  tuitionFee.value + labFee.value + miscFee.value
+  tuitionFee.value + labFee.value + entrepreneurshipFee.value + miscFee.value
 )
 
 // Total units = lec + lab (informational, matches what's on the matriculation form)
@@ -314,6 +333,56 @@ function submit() {
             </div>
           </Card>
 
+          <!-- Discount Input -->
+          <Card>
+            <CardHeader>
+              <CardTitle class="text-base flex items-center gap-2">
+                <span class="text-yellow-600">₱</span>
+                Tuition Discount
+                <span class="ml-auto text-xs font-normal text-muted-foreground">
+                  Optional
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent class="space-y-3">
+              <div class="space-y-1.5">
+                <Label for="discount_percentage" class="flex items-center justify-between">
+                  <span>Discount %</span>
+                  <span class="text-sm text-muted-foreground">
+                    0% = Full tuition | 100% = Minimum (₱546)
+                  </span>
+                </Label>
+                <div class="flex gap-3 items-center">
+                  <Input 
+                    id="discount_percentage" 
+                    type="number" 
+                    v-model.number="form.discount_percentage"
+                    min="0" 
+                    max="100" 
+                    step="0.01"
+                    class="text-center text-lg font-semibold" 
+                  />
+                  <span class="text-sm font-medium text-muted-foreground">%</span>
+                </div>
+                <p v-if="form.errors.discount_percentage" class="text-sm text-destructive">
+                  {{ form.errors.discount_percentage }}
+                </p>
+              </div>
+
+              <!-- Discount Preview -->
+              <div v-if="Number(form.lec_units) > 0" class="rounded-md bg-blue-50 p-3 space-y-1.5">
+                <div class="text-xs text-muted-foreground">Full tuition: <span class="font-semibold text-blue-900">{{ formatCurrency(baseTuition) }}</span></div>
+                <div class="text-xs text-muted-foreground">Minimum floor: <span class="font-semibold text-blue-900">{{ formatCurrency(minimumTuition) }}</span></div>
+                <div class="border-t pt-1.5 text-sm">
+                  <div class="flex justify-between">
+                    <span class="font-semibold">Final tuition:</span>
+                    <span class="font-bold text-base text-blue-900">{{ formatCurrency(tuitionFee) }}</span>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           <!-- Submit -->
           <div class="flex gap-3 justify-end">
             <Button variant="outline" @click="router.visit(route('student-fees.index'))">
@@ -355,6 +424,10 @@ function submit() {
                     Lab Fee ({{ form.lab_units }} units × {{ formatCurrency(feeRates.lab_fee_per_unit) }})
                   </span>
                   <span class="font-medium">{{ formatCurrency(labFee) }}</span>
+                </div>
+                <div v-if="entrepreneurshipFee > 0" class="flex justify-between">
+                  <span class="text-muted-foreground">+ Entrepreneurship Fee</span>
+                  <span class="font-medium">{{ formatCurrency(entrepreneurshipFee) }}</span>
                 </div>
                 <div class="flex justify-between">
                   <span class="text-muted-foreground">Miscellaneous (fixed)</span>

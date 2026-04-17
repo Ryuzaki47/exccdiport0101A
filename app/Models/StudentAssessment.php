@@ -17,14 +17,18 @@ class StudentAssessment extends Model
         'school_year',
         'lec_units',
         'lab_units',
+        'discount_percentage',
         'total_assessment',
         'status',
     ];
 
+    public const MINIMUM_UNITS = 1.5; // ₱546 floor (1.5 units × ₱364)
+
     protected $casts = [
-        'lec_units'        => 'integer',
-        'lab_units'        => 'integer',
-        'total_assessment' => 'decimal:2',
+        'lec_units'           => 'integer',
+        'lab_units'           => 'integer',
+        'discount_percentage' => 'decimal:2',
+        'total_assessment'    => 'decimal:2',
     ];
 
     // ─── Relationships ────────────────────────────────────────────────────────
@@ -49,7 +53,13 @@ class StudentAssessment extends Model
 
     public function getTuitionFeeAttribute(): float
     {
-        return $this->lec_units * (float) config('fees.tuition_per_lec_unit', 364.00);
+        $tuitionPerUnit = (float) config('fees.tuition_per_lec_unit', 364.00);
+        $fullTuition = $this->lec_units * $tuitionPerUnit;
+        $minimum = self::MINIMUM_UNITS * $tuitionPerUnit;
+        $discount = (float) ($this->discount_percentage ?? 0);
+        
+        // Apply discount: final = min + (full - min) × (1 - discount/100)
+        return round($minimum + ($fullTuition - $minimum) * (1 - $discount / 100), 2);
     }
 
     public function getLabFeeAttribute(): float

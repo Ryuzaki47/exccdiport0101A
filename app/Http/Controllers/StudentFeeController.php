@@ -27,18 +27,33 @@ class StudentFeeController extends Controller
     //  HELPERS
     // ─────────────────────────────────────────────────────────────
 
-    private function computeTotal(int $lecUnits, int $labUnits): array
+    private function computeTotal(int $lecUnits, int $labUnits, float $discountPercentage = 0): array
     {
         $tuitionPerUnit = (float) config('fees.tuition_per_lec_unit', 364.00);
         $labFeePerUnit  = (float) config('fees.lab_fee_per_unit', 1656.00);
         $miscFeeFixed   = (float) config('fees.misc_fee_fixed', 4700.00);
+        $entrepreneurshipFee = (float) config('fees.lab.entrepreneurship_fee', 600.00);
 
-        $tuitionFee = $lecUnits * $tuitionPerUnit;
-        $labFee     = $labUnits * $labFeePerUnit;
-        $miscFee    = $miscFeeFixed;
-        $total      = $tuitionFee + $labFee + $miscFee;
+        // Base tuition (no discount yet)
+        $baseTuition = $lecUnits * $tuitionPerUnit;
 
-        return compact('tuitionFee', 'labFee', 'miscFee', 'total');
+        // Apply discount to tuition only, with minimum floor of 1.5 units
+        $minimumTuition = 1.5 * $tuitionPerUnit; // ₱546
+        $discountDecimal = min(100, max(0, $discountPercentage)) / 100; // Clamp 0-100%
+        $tuitionFee = round($minimumTuition + ($baseTuition - $minimumTuition) * (1 - $discountDecimal), 2);
+
+        // Lab fee (no discount)
+        $labFee = $labUnits * $labFeePerUnit;
+
+        // Entrepreneurship fee (₱600 if any labs)
+        $entrepreneurship = $labUnits > 0 ? $entrepreneurshipFee : 0;
+
+        // Miscellaneous fee (fixed)
+        $miscFee = $miscFeeFixed;
+
+        $total = $tuitionFee + $labFee + $entrepreneurship + $miscFee;
+
+        return compact('tuitionFee', 'labFee', 'entrepreneurship', 'miscFee', 'total');
     }
 
     private function buildPaymentTerms(float $total): array
@@ -229,14 +244,16 @@ class StudentFeeController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'user_id'     => ['required', 'exists:users,id'],
-            'semester'    => ['required', 'in:1st,2nd,Summer'],
-            'school_year' => ['required', 'string', 'max:20'],
-            'lec_units'   => ['required', 'numeric', 'min:0', 'max:30'],
-            'lab_units'   => ['required', 'integer', 'min:0', 'max:10'],
+            'user_id'              => ['required', 'exists:users,id'],
+            'semester'             => ['required', 'in:1st,2nd,Summer'],
+            'school_year'          => ['required', 'string', 'max:20'],
+            'lec_units'            => ['required', 'numeric', 'min:0', 'max:30'],
+            'lab_units'            => ['required', 'integer', 'min:0', 'max:10'],
+            'discount_percentage'  => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
         $validated['lec_units'] = (int) $validated['lec_units'];
+        $validated['discount_percentage'] = (float) ($validated['discount_percentage'] ?? 0);
 
         try {
             DB::transaction(function () use ($validated) {
@@ -261,22 +278,24 @@ class StudentFeeController extends Controller
 
                 $fees    = $this->computeTotal(
                     (int) $validated['lec_units'],
-                    (int) $validated['lab_units']
+                    (int) $validated['lab_units'],
+                    $validated['discount_percentage']
                 );
                 $student = User::findOrFail($validated['user_id']);
 
                 $assessmentNumber = StudentAssessment::generateAssessmentNumber();
 
                 $assessment = StudentAssessment::create([
-                    'assessment_number' => $assessmentNumber,
-                    'user_id'           => $validated['user_id'],
-                    'semester'          => $validated['semester'],
-                    'school_year'       => $validated['school_year'],
-                    'lec_units'         => $validated['lec_units'],
-                    'lab_units'         => $validated['lab_units'],
-                    'year_level'        => $student->year_level,
-                    'total_assessment'  => $fees['total'],
-                    'status'            => 'active',
+                    'assessment_number'    => $assessmentNumber,
+                    'user_id'              => $validated['user_id'],
+                    'semester'             => $validated['semester'],
+                    'school_year'          => $validated['school_year'],
+                    'lec_units'            => $validated['lec_units'],
+                    'lab_units'            => $validated['lab_units'],
+                    'discount_percentage'  => $validated['discount_percentage'],
+                    'year_level'           => $student->year_level,
+                    'total_assessment'     => $fees['total'],
+                    'status'               => 'active',
                 ]);
 
                 foreach ($this->buildPaymentTerms($fees['total']) as $term) {
@@ -293,12 +312,14 @@ class StudentFeeController extends Controller
                     'year'            => now()->year,
                     'semester'        => $validated['semester'],
                     'meta'            => json_encode([
-                        'lec_units'   => $validated['lec_units'],
-                        'lab_units'   => $validated['lab_units'],
-                        'tuition_fee' => $fees['tuitionFee'],
-                        'lab_fee'     => $fees['labFee'],
-                        'misc_fee'    => $fees['miscFee'],
-                        'school_year' => $validated['school_year'],
+                        'lec_units'           => $validated['lec_units'],
+                        'lab_units'           => $validated['lab_units'],
+                        'discount_percentage' => $validated['discount_percentage'],
+                        'tuition_fee'         => $fees['tuitionFee'],
+                        'lab_fee'             => $fees['labFee'],
+                        'entrepreneurship'    => $fees['entrepreneurship'],
+                        'misc_fee'            => $fees['miscFee'],
+                        'school_year'         => $validated['school_year'],
                     ]),
                 ]);
 
@@ -338,7 +359,7 @@ class StudentFeeController extends Controller
         $assessment = $user->latestAssessment;
 
         $allAssessmentsFormatted = $allAssessmentsRaw->map(function ($a) use ($user) {
-            $fees = $this->computeTotal($a->lec_units, $a->lab_units);
+            $fees = $this->computeTotal($a->lec_units, $a->lab_units, $a->discount_percentage ?? 0);
 
             return [
                 'id'               => $a->id,
@@ -385,7 +406,8 @@ class StudentFeeController extends Controller
         if ($assessment) {
             $feeBreakdown = $this->computeTotal(
                 $assessment->lec_units,
-                $assessment->lab_units
+                $assessment->lab_units,
+                $assessment->discount_percentage ?? 0
             );
         }
 
@@ -561,13 +583,15 @@ class StudentFeeController extends Controller
 
     public function update(Request $request, int $userId)
     {
-        $validated = $request->validate([
-            'semester'    => ['required', 'in:1st,2nd,Summer'],
-            'school_year' => ['required', 'string', 'max:20'],
-            'lec_units'   => ['required', 'numeric', 'min:0', 'max:30'],
-            'lab_units'   => ['required', 'integer', 'min:0', 'max:10'],
+        $validated = $requ         => ['required', 'in:1st,2nd,Summer'],
+            'school_year'          => ['required', 'string', 'max:20'],
+            'lec_units'            => ['required', 'numeric', 'min:0', 'max:30'],
+            'lab_units'            => ['required', 'integer', 'min:0', 'max:10'],
+            'discount_percentage'  => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
+        $validated['lec_units'] = (int) $validated['lec_units'];
+        $validated['discount_percentage'] = (float) ($validated['discount_percentage'] ?? 0)
         $validated['lec_units'] = (int) $validated['lec_units'];
 
         $assessment = StudentAssessment::where('user_id', $userId)
@@ -587,15 +611,17 @@ class StudentFeeController extends Controller
         DB::transaction(function () use ($assessment, $validated, $userId) {
             $fees = $this->computeTotal(
                 (int) $validated['lec_units'],
-                (int) $validated['lab_units']
+                (int) $validated['lab_units'],
+                $validated['discount_percentage']
             );
 
             $assessment->update([
-                'semester'         => $validated['semester'],
-                'school_year'      => $validated['school_year'],
-                'lec_units'        => $validated['lec_units'],
-                'lab_units'        => $validated['lab_units'],
-                'total_assessment' => $fees['total'],
+                'semester'             => $validated['semester'],
+                'school_year'          => $validated['school_year'],
+                'lec_units'            => $validated['lec_units'],
+                'lab_units'            => $validated['lab_units'],
+                'discount_percentage'  => $validated['discount_percentage'],
+                'total_assessment'     => $fees['total'],
             ]);
 
             $assessment->paymentTerms()->delete();
@@ -612,13 +638,15 @@ class StudentFeeController extends Controller
                 ?->update([
                     'amount' => $fees['total'],
                     'meta'   => json_encode([
-                        'lec_units'   => $validated['lec_units'],
-                        'lab_units'   => $validated['lab_units'],
-                        'tuition_fee' => $fees['tuitionFee'],
-                        'lab_fee'     => $fees['labFee'],
-                        'misc_fee'    => $fees['miscFee'],
-                        'school_year' => $validated['school_year'],
-                        'updated_at'  => now()->toISOString(),
+                        'lec_units'           => $validated['lec_units'],
+                        'lab_units'           => $validated['lab_units'],
+                        'discount_percentage' => $validated['discount_percentage'],
+                        'tuition_fee'         => $fees['tuitionFee'],
+                        'lab_fee'             => $fees['labFee'],
+                        'entrepreneurship'    => $fees['entrepreneurship'],
+                        'misc_fee'            => $fees['miscFee'],
+                        'school_year'         => $validated['school_year'],
+                        'updated_at'          => now()->toISOString(),
                     ]),
                 ]);
 
@@ -682,12 +710,13 @@ class StudentFeeController extends Controller
                 ->firstOrFail();
         }
 
-        $fees = $this->computeTotal($assessment->lec_units, $assessment->lab_units);
+        $fees = $this->computeTotal($assessment->lec_units, $assessment->lab_units, $assessment->discount_percentage ?? 0);
 
         $assessment->fee_breakdown = [
-            ['category' => 'Tuition',       'name' => 'Tuition Fee',       'amount' => $fees['tuitionFee']],
-            ['category' => 'Laboratory',    'name' => 'Laboratory Fee',    'amount' => $fees['labFee']],
-            ['category' => 'Miscellaneous', 'name' => 'Miscellaneous Fee', 'amount' => $fees['miscFee']],
+            ['category' => 'Tuition',          'name' => 'Tuition Fee',            'amount' => $fees['tuitionFee']],
+            ['category' => 'Laboratory',       'name' => 'Laboratory Fee',         'amount' => $fees['labFee']],
+            ['category' => 'Entrepreneurship', 'name' => 'Entrepreneurship Fee',   'amount' => $fees['entrepreneurship']],
+            ['category' => 'Miscellaneous',    'name' => 'Miscellaneous Fee',      'amount' => $fees['miscFee']],
         ];
 
         $paymentTerms = $assessment->paymentTerms()->orderBy('term_order')->get();

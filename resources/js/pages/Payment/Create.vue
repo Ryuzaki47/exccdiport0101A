@@ -2,7 +2,7 @@
 import AppLayout from '@/layouts/AppLayout.vue';
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import { useDataFormatting } from '@/composables/useDataFormatting';
-import { Head, router, useForm } from '@inertiajs/vue3';
+import { Head, router, useForm, usePage } from '@inertiajs/vue3';
 import { computed, ref, watch } from 'vue';
 import { AlertCircle, CheckCircle, Clock } from 'lucide-vue-next';
 
@@ -82,7 +82,6 @@ const allPaymentMethods = [
     { value: 'debit_card',    label: 'Debit Card' },
 ];
 
-// Filter payment methods based on environment availability
 const availablePaymentMethods = computed(() =>
     allPaymentMethods.filter((m) => props.availablePaymentMethods.includes(m.value)),
 );
@@ -136,14 +135,12 @@ const form = useForm({
     description: '' as string,
 });
 
-// Auto-fill amount when term is selected
 watch(() => form.selected_term_id, (termId) => {
     if (!termId) return;
     const term = availableTerms.value.find((t) => t.id === termId);
     if (term) form.amount = term.balance;
 });
 
-// Set preselected term if passed from URL
 if (props.preselectedTermId) {
     form.selected_term_id = props.preselectedTermId;
 }
@@ -167,8 +164,13 @@ const validationError = computed<string | null>(() => {
     return null;
 });
 
+// ── Checkout state ────────────────────────────────────────────────────────────
+
+const isCheckingOut = ref(false);  // FIX: tracks loading state for fetch() flow
+const checkoutError = ref<string | null>(null);  // FIX: inline error instead of alert()
+
 const canSubmit = computed(() =>
-    !validationError.value && !form.processing,
+    !validationError.value && !form.processing && !isCheckingOut.value,
 );
 
 // ── Submission ────────────────────────────────────────────────────────────────
@@ -177,46 +179,66 @@ const submitSuccess = ref(false);
 
 const submit = () => {
     if (!canSubmit.value) return;
+    checkoutError.value = null;
 
-    // Different flows for different payment methods
-    if (['credit_card', 'debit_card'].includes(form.payment_method) || form.payment_method === 'gcash') {
-        // PayMongo checkout flow
+    if (['credit_card', 'debit_card', 'gcash'].includes(form.payment_method)) {
         submitCheckout();
     } else {
-        // Internal payment flow (bank transfer, etc.)
         submitInternalPayment();
     }
 };
 
 const submitCheckout = async () => {
+    isCheckingOut.value = true;
+    checkoutError.value = null;
+
     try {
+        // FIX: usePage().props.csrf_token uses the token already shared by
+        // HandleInertiaRequests — no DOM query needed.
+        // FIX: credentials: 'same-origin' is REQUIRED so the browser sends
+        // the laravel_session cookie. Without it, the server sees no session
+        // and cannot validate the CSRF token → 419.
+        const page = usePage();
+        const csrfToken = (page.props.csrf_token as string) ?? '';
+
         const response = await fetch(route('payment.checkout'), {
             method: 'POST',
+            credentials: 'same-origin', // ← THE CRITICAL FIX
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
                 'X-Requested-With': 'XMLHttpRequest',
             },
             body: JSON.stringify({
                 amount: form.amount,
                 description: `${selectedTerm.value?.term_name || 'Payment'} - ${form.description || ''}`.trim(),
                 selected_term_id: form.selected_term_id,
-                paid_at: form.paid_at,
-                payment_method: form.payment_method,
             }),
         });
 
+        const data = await response.json();
+
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Checkout failed');
+            // FIX: surface validation errors (422) or server errors (500) inline
+            throw new Error(data.error || data.message || `Server error: ${response.status}`);
         }
 
-        const data = await response.json();
-        // Redirect to PayMongo checkout
+        if (!data.checkout_url) {
+            throw new Error('No checkout URL returned. Please try again or contact support.');
+        }
+
+        // Redirect to PayMongo hosted checkout page
         window.location.href = data.checkout_url;
+
     } catch (error) {
         console.error('Checkout error:', error);
-        alert(`❌ ${error instanceof Error ? error.message : 'Payment failed'}`);
+        // FIX: inline error display instead of alert()
+        checkoutError.value = error instanceof Error
+            ? error.message
+            : 'An unexpected error occurred. Please try again.';
+    } finally {
+        isCheckingOut.value = false;
     }
 };
 
@@ -226,7 +248,6 @@ const submitInternalPayment = () => {
         onSuccess: () => {
             submitSuccess.value = true;
             form.reset('amount', 'description');
-            // Redirect to history tab after short delay
             setTimeout(() => {
                 router.get(route('student.account'), { tab: 'history' });
             }, 2000);
@@ -463,12 +484,21 @@ const dueDateUrgency = (dueDate: string | null): 'red' | 'amber' | 'green' | nul
                             />
                         </div>
 
-                        <!-- Validation error -->
+                        <!-- Validation error (frontend) -->
                         <div
                             v-if="validationError"
                             class="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
                         >
                             {{ validationError }}
+                        </div>
+
+                        <!-- Checkout/server error (FIX: inline instead of alert()) -->
+                        <div
+                            v-if="checkoutError"
+                            class="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start gap-2"
+                        >
+                            <AlertCircle :size="16" class="mt-0.5 flex-shrink-0" />
+                            <span>{{ checkoutError }}</span>
                         </div>
 
                         <!-- Submit -->
@@ -478,7 +508,10 @@ const dueDateUrgency = (dueDate: string | null): 'red' | 'amber' | 'green' | nul
                             :disabled="!canSubmit"
                             class="w-full rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white shadow transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                            <span v-if="form.processing">Submitting…</span>
+                            <!-- FIX: isCheckingOut covers the fetch() loading state -->
+                            <span v-if="form.processing || isCheckingOut">
+                                {{ isCheckingOut ? 'Redirecting to payment…' : 'Submitting…' }}
+                            </span>
                             <span v-else>Submit Payment for Verification</span>
                         </button>
 
