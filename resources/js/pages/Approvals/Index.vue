@@ -82,6 +82,8 @@ const getTermName = (a: Approval) =>
 const formatDate = (d: string) =>
     new Date(d).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
 
+const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
+
 // Counts
 const pendingCount = computed(() => props.approvals.data.filter((a) => a.status === 'pending').length);
 const approvedCount = computed(() => props.approvals.data.filter((a) => a.status === 'approved').length);
@@ -267,7 +269,7 @@ const submitRejection = () => {
                                 <td class="px-5 py-3.5 text-sm text-muted-foreground">{{ formatDate(approval.created_at) }}</td>
                                 <td class="px-5 py-3.5 text-center">
                                     <span :class="approval.status === 'pending' ? 'ccdi-badge-yellow' : approval.status === 'approved' ? 'ccdi-badge-green' : 'ccdi-badge-red'">
-                                        {{ approval.status === 'pending' ? 'Pending' : approval.status === 'approved' ? 'Approved' : 'Rejected' }}
+                                        {{ capitalize(approval.status) }}
                                     </span>
                                 </td>
                                 <td class="px-5 py-3.5 text-right">

@@ -26,7 +26,7 @@
                         }"
                         class="rounded-full px-4 py-2 text-sm font-semibold"
                     >
-                        {{ workflow.status }}
+                        {{ capitalize(workflow.status) }}
                     </span>
                 </div>
 
@@ -82,7 +82,7 @@
                                     }"
                                     class="rounded px-2 py-1 text-xs font-semibold"
                                 >
-                                    {{ approval.status }}
+                                    {{ capitalize(approval.status) }}
                                 </span>
                             </div>
                             <p v-if="approval.comment" class="mt-2 text-sm text-gray-700">{{ approval.comment }}</p>
@@ -149,4 +149,6 @@ const formatDate = (date: string) => {
         minute: '2-digit',
     });
 };
+
+const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
 </script>

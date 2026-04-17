@@ -76,6 +76,8 @@ const formatDate = (date: string | null) => {
     });
 };
 
+const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
+
 const showRejectDialog = ref(false);
 
 // Approve — useForm gives Inertia proper processing state.
@@ -142,7 +144,7 @@ const refreshApproval = () => {
                             'bg-red-100 text-red-800': approval.status === 'rejected',
                         }"
                     >
-                        {{ approval.status }}
+                        {{ capitalize(approval.status) }}
                     </span>
                     <p v-if="approval.workflow_instance?.workflowable?.amount" class="text-2xl font-bold text-blue-700">
                         {{ formatCurrency(approval.workflow_instance.workflowable.amount) }}
@@ -251,7 +253,7 @@ const refreshApproval = () => {
                                                 'bg-green-100 text-green-800': term.status === 'paid',
                                             }"
                                         >
-                                            {{ term.status }}
+                                            {{ capitalize(term.status) }}
                                         </span>
                                     </td>
                                 </tr>
