@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Events;
 
 class PaymentTerm extends Model
 {
@@ -14,9 +15,15 @@ class PaymentTerm extends Model
         'percentage' => 'decimal:2',
     ];
 
-    /**
-     * Get all payment terms in order
-     */
+    // FIX Bug #8: Clear cache on any write operation via model events.
+    protected static function booted(): void
+    {
+        $clear = fn () => self::clearCache();
+
+        static::saved($clear);
+        static::deleted($clear);
+    }
+
     public static function getTerms()
     {
         return cache()->remember('payment_terms', 3600, function () {
@@ -24,18 +31,12 @@ class PaymentTerm extends Model
         });
     }
 
-    /**
-     * Validate percentages sum to 100
-     */
     public static function validatePercentages(): bool
     {
         $total = self::sum('percentage');
-        return abs($total - 100.0) < 0.01; // Allow small rounding errors
+        return abs($total - 100.0) < 0.01;
     }
 
-    /**
-     * Clear payment terms cache
-     */
     public static function clearCache(): void
     {
         cache()->forget('payment_terms');

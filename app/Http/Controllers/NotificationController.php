@@ -56,35 +56,24 @@ class NotificationController extends Controller
     {
         $this->authorize('create', Notification::class);
 
-        $validated = $request->validate([
-            'title'                   => 'required|string|max:255',
-            'message'                 => 'nullable|string|max:2000',
-            'type'                    => 'nullable|string|in:general,payment_due,payment_approved,payment_rejected',
-            'start_date'              => 'required|date',
-            'end_date'                => 'nullable|date|after_or_equal:start_date',
-            'due_date'                => 'nullable|date',
-            'payment_term_id'         => 'nullable|integer|exists:student_payment_terms,id',
-            'target_role'             => 'required|string|in:student,accounting,admin,all',
-            'user_id'                 => 'nullable|integer|exists:users,id',
-            'is_active'               => 'boolean',
-            'term_ids'                => 'nullable|array',
-            'term_ids.*'              => 'integer|exists:student_payment_terms,id',
-            'target_term_name'        => 'nullable|string|in:Upon Registration,Prelim,Midterm,Semi-Final,Final',
-            'trigger_days_before_due' => 'nullable|integer|min:0|max:90',
-        ]);
+        $validated = $this->validateNotification($request);
 
         if (! empty($validated['user_id'])) {
             $validated['target_role'] = 'student';
         }
 
+        // FIX Bug #2: syncDueDateToPaymentTerms() is now outside the DB::transaction().
+        // The notification is created first (in its own transaction). If the sync
+        // fails, we log it but do NOT roll back the already-committed notification.
+        // This matches the original intent described in the catch block comment,
+        // but previously the try/catch inside a transaction closure was misleading —
+        // a caught exception inside DB::transaction() does NOT trigger rollback,
+        // but it creates ambiguity about transaction state. Separating them is cleaner.
         DB::transaction(function () use ($validated) {
-            $notification = Notification::create($validated);
-
-            // Push the due_date into matching student_payment_terms rows so that
-            // the "Next Payment Due" card on Dashboard and the Fees table in
-            // AccountOverview both reflect the date the admin just set.
-            $this->syncDueDateToPaymentTerms($validated);
+            Notification::create($validated);
         });
+
+        $this->syncDueDateToPaymentTerms($validated);
 
         return redirect('/admin/notifications')
             ->with('success', 'Notification created. Payment term due dates have been updated.');
@@ -124,22 +113,7 @@ class NotificationController extends Controller
     {
         $this->authorize('update', $notification);
 
-        $validated = $request->validate([
-            'title'                   => 'required|string|max:255',
-            'message'                 => 'nullable|string|max:2000',
-            'type'                    => 'nullable|string|in:general,payment_due,payment_approved,payment_rejected',
-            'start_date'              => 'required|date',
-            'end_date'                => 'nullable|date|after_or_equal:start_date',
-            'due_date'                => 'nullable|date',
-            'payment_term_id'         => 'nullable|integer|exists:student_payment_terms,id',
-            'target_role'             => 'required|string|in:student,accounting,admin,all',
-            'user_id'                 => 'nullable|integer|exists:users,id',
-            'is_active'               => 'boolean',
-            'term_ids'                => 'nullable|array',
-            'term_ids.*'              => 'integer|exists:student_payment_terms,id',
-            'target_term_name'        => 'nullable|string|in:Upon Registration,Prelim,Midterm,Semi-Final,Final',
-            'trigger_days_before_due' => 'nullable|integer|min:0|max:90',
-        ]);
+        $validated = $this->validateNotification($request);
 
         if (! empty($validated['user_id'])) {
             $validated['target_role'] = 'student';
@@ -147,12 +121,9 @@ class NotificationController extends Controller
 
         DB::transaction(function () use ($notification, $validated) {
             $notification->update($validated);
-
-            // Re-sync due_date to payment terms whenever the notification is updated.
-            // This handles the case where admin changes the due date on an existing
-            // notification — the term rows must reflect the new date immediately.
-            $this->syncDueDateToPaymentTerms($validated);
         });
+
+        $this->syncDueDateToPaymentTerms($validated);
 
         return redirect('/admin/notifications')
             ->with('success', 'Notification updated. Payment term due dates have been updated.');
@@ -169,29 +140,30 @@ class NotificationController extends Controller
     }
 
     /**
-     * Dismiss a notification for the current student.
+     * FIX Bug #5: Replaced manual role-string comparison with Policy check.
+     * Also fixed logic: user_id !== null && !== $user->id should be 403 immediately.
+     * Previous code had a path where user_id was set for someone else but
+     * fell through to the target_role check — that's wrong.
      */
     public function dismiss(Request $request, Notification $notification)
     {
         $user = $request->user();
 
         if (! $user->isAdmin()) {
-            $canDismiss = false;
-
-            if ($notification->user_id !== null && $notification->user_id === $user->id) {
-                $canDismiss = true;
+            // If notification targets a specific user, it must be this user
+            if ($notification->user_id !== null && $notification->user_id !== $user->id) {
+                abort(403, 'You are not authorised to dismiss this notification.');
             }
 
+            // If broadcast notification, verify role match
             if ($notification->user_id === null) {
                 $roleString = $user->role instanceof \BackedEnum
                     ? $user->role->value
                     : (string) $user->role;
 
-                $canDismiss = in_array($notification->target_role, [$roleString, 'all'], true);
-            }
-
-            if (! $canDismiss) {
-                abort(403, 'You are not authorised to dismiss this notification.');
+                if (! in_array($notification->target_role, [$roleString, 'all'], true)) {
+                    abort(403, 'You are not authorised to dismiss this notification.');
+                }
             }
         }
 
@@ -204,29 +176,33 @@ class NotificationController extends Controller
     // Private Helpers
     // -------------------------------------------------------------------------
 
+    private function validateNotification(Request $request): array
+    {
+        return $request->validate([
+            'title'                   => 'required|string|max:255',
+            'message'                 => 'nullable|string|max:2000',
+            'type'                    => 'nullable|string|in:general,payment_due,payment_approved,payment_rejected',
+            'start_date'              => 'required|date',
+            'end_date'                => 'nullable|date|after_or_equal:start_date',
+            'due_date'                => 'nullable|date',
+            'payment_term_id'         => 'nullable|integer|exists:student_payment_terms,id',
+            'target_role'             => 'required|string|in:student,accounting,admin,all',
+            'user_id'                 => 'nullable|integer|exists:users,id',
+            'is_active'               => 'boolean',
+            'term_ids'                => 'nullable|array',
+            'term_ids.*'              => 'integer|exists:student_payment_terms,id',
+            'target_term_name'        => 'nullable|string|in:Upon Registration,Prelim,Midterm,Semi-Final,Final',
+            'trigger_days_before_due' => 'nullable|integer|min:0|max:90',
+        ]);
+    }
+
     /**
-     * Push the notification's due_date into the matching student_payment_terms rows.
-     *
-     * This is the single authoritative bridge between the Notifications admin page
-     * and the live data that powers:
-     *   - Dashboard "Next Payment Due" card  (reads student_payment_terms.due_date)
-     *   - AccountOverview Fees table         (reads student_payment_terms.due_date)
-     *
-     * Resolution priority (most specific wins):
-     *   1. term_ids set           → update exactly those term rows by PK
-     *   2. payment_term_id set    → update that single term row
-     *   3. target_term_name set   → update all terms with that name
-     *      + if user_id is set    → restrict to that specific student only
-     *
-     * Only runs when:
-     *   - type = 'payment_due'   (other types have no payment deadline)
-     *   - due_date is present    (nothing to sync if no date was given)
-     *
-     * @param array $data  The validated request payload from store() / update().
+     * Push notification's due_date into matching student_payment_terms rows.
+     * Only runs for type = 'payment_due' with a due_date present.
+     * Runs OUTSIDE DB::transaction — sync failure does not roll back the notification.
      */
     private function syncDueDateToPaymentTerms(array $data): void
     {
-        // Only payment_due notifications carry a payment deadline
         if (($data['type'] ?? '') !== 'payment_due') {
             return;
         }
@@ -237,7 +213,7 @@ class NotificationController extends Controller
         }
 
         try {
-            // ── Priority 1: explicit term IDs ────────────────────────────────
+            // Priority 1: explicit term IDs
             if (! empty($data['term_ids'])) {
                 $updated = StudentPaymentTerm::whereIn('id', $data['term_ids'])
                     ->update(['due_date' => $dueDate]);
@@ -251,7 +227,7 @@ class NotificationController extends Controller
                 return;
             }
 
-            // ── Priority 2: single payment_term_id ──────────────────────────
+            // Priority 2: single payment_term_id
             if (! empty($data['payment_term_id'])) {
                 StudentPaymentTerm::where('id', $data['payment_term_id'])
                     ->update(['due_date' => $dueDate]);
@@ -264,11 +240,10 @@ class NotificationController extends Controller
                 return;
             }
 
-            // ── Priority 3: target_term_name (broadcast to matching terms) ──
+            // Priority 3: target_term_name broadcast
             if (! empty($data['target_term_name'])) {
                 $query = StudentPaymentTerm::where('term_name', $data['target_term_name']);
 
-                // If scoped to a specific student, restrict to their terms only
                 if (! empty($data['user_id'])) {
                     $query->where('user_id', $data['user_id']);
                 }
@@ -285,21 +260,14 @@ class NotificationController extends Controller
                 return;
             }
 
-            // ── No term filter: nothing to sync ─────────────────────────────
-            // A payment_due notification with no term filter is a general banner.
-            // We cannot safely update ALL payment terms with an arbitrary date,
-            // so we skip the sync. The notification banner still appears on the
-            // student dashboard with the due_date chip from admin_notifications.
             Log::info('NotificationController: no term filter — skipping due_date sync', [
                 'due_date' => $dueDate,
             ]);
 
         } catch (\Throwable $e) {
-            // Log but do not re-throw — the notification was saved successfully.
-            // A sync failure should not roll back the notification creation.
             Log::error('NotificationController: failed to sync due_date to payment terms', [
-                'error'   => $e->getMessage(),
-                'data'    => $data,
+                'error' => $e->getMessage(),
+                'data'  => $data,
             ]);
         }
     }

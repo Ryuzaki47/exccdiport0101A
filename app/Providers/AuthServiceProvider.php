@@ -6,12 +6,15 @@ use App\Models\User;
 use App\Models\Notification;
 use App\Models\StudentPaymentTerm;
 use App\Models\Student;
+use App\Models\WorkflowApproval;
+use App\Models\Payment;
+
 use App\Policies\UserPolicy;
 use App\Policies\NotificationPolicy;
-use App\Policies\StudentFeePolicy;
 use App\Policies\StudentPaymentTermPolicy;
-use App\Models\WorkflowApproval;
 use App\Policies\WorkflowApprovalPolicy;
+use App\Policies\PaymentPolicy;
+
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
 use Illuminate\Support\Facades\Route;
 
@@ -22,6 +25,7 @@ class AuthServiceProvider extends ServiceProvider
         Notification::class => NotificationPolicy::class,
         WorkflowApproval::class => WorkflowApprovalPolicy::class,
         StudentPaymentTerm::class => StudentPaymentTermPolicy::class,
+        Payment::class => PaymentPolicy::class, // ✅ ADDED
     ];
 
     public function boot(): void
@@ -31,11 +35,6 @@ class AuthServiceProvider extends ServiceProvider
         // ============================================================
         // ROUTE MODEL BINDING — Include Soft-Deleted Students
         // ============================================================
-        // 
-        // The Student model uses SoftDeletes. Routes that access
-        // archived (graduated, dropped, inactive) students must
-        // explicitly include soft-deleted records via withTrashed().
-        //
         Route::bind('student', function ($value) {
             return Student::withTrashed()->findOrFail($value);
         });

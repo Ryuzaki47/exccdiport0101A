@@ -83,24 +83,22 @@ class PaymentController extends Controller
                     ])
                 : collect();
 
-            // Format assessment data for Inertia serialization
             $assessmentFormatted = $assessment ? [
-                'id'                 => $assessment->id,
-                'assessment_number'  => $assessment->assessment_number ?? 'N/A',
-                'year_level'         => $assessment->year_level ?? 'Unknown',
-                'semester'           => $assessment->semester ?? 'Unknown',
-                'school_year'        => $assessment->school_year ?? 'Unknown',
-                'total_assessment'   => (float) ($assessment->total_assessment ?? 0),
-                'status'             => $assessment->status ?? 'active',
-                'lec_units'          => $assessment->lec_units ?? 0,
-                'lab_units'          => $assessment->lab_units ?? 0,
+                'id'                => $assessment->id,
+                'assessment_number' => $assessment->assessment_number ?? 'N/A',
+                'year_level'        => $assessment->year_level ?? 'Unknown',
+                'semester'          => $assessment->semester ?? 'Unknown',
+                'school_year'       => $assessment->school_year ?? 'Unknown',
+                'total_assessment'  => (float) ($assessment->total_assessment ?? 0),
+                'status'            => $assessment->status ?? 'active',
+                'lec_units'         => $assessment->lec_units ?? 0,
+                'lab_units'         => $assessment->lab_units ?? 0,
             ] : null;
 
-            // Available payment methods based on environment
             $isLiveMode = str_starts_with($this->secretKey, 'sk_live_');
             $availablePaymentMethods = $isLiveMode
                 ? ['credit_card', 'debit_card', 'gcash', 'bank_transfer']
-                : ['credit_card', 'debit_card', 'bank_transfer']; // GCash unavailable in test mode
+                : ['credit_card', 'debit_card', 'bank_transfer'];
 
             return Inertia::render('Payment/Create', [
                 'student' => [
@@ -129,15 +127,6 @@ class PaymentController extends Controller
 
     // ─────────────────────────────────────────────────────────────────────────
     //  PAYMONGO — CREATE CHECKOUT SESSION
-    //
-    //  GUARD: Duplicate PayMongo session prevention.
-    //  Before opening a new checkout session, check if the student already has
-    //  a pending (incomplete) PayMongo payment for the same term. If yes, block
-    //  the request. This prevents double-sessions from two open browser tabs.
-    //
-    //  NOTE: paid_at and payment_method are NOT required here — PayMongo
-    //  handles the payment method selection on its own checkout page. We only
-    //  need amount, description, and the term reference for accounting.
     // ─────────────────────────────────────────────────────────────────────────
 
     public function createCheckout(Request $request)
@@ -152,41 +141,30 @@ class PaymentController extends Controller
 
         $user = $request->user();
 
-        // ── DUPLICATE PAYMONGO SESSION GUARD ───────────────────────────────
-        // If a pending Payment row already exists for this term + user within
-        // the TTL window, check whether the PayMongo session is actually still
-        // active before blocking. This handles the case where the student
-        // closed the PayMongo tab without hitting the cancel URL — the pending
-        // row exists but the session is already expired on PayMongo's end.
+        // ── DUPLICATE CHECKOUT SESSION GUARD ──────────────────────────────────
         if ($validated['selected_term_id']) {
             $stalePending = Payment::where('user_id', $user->id)
                 ->where('status', 'pending')
                 ->whereNotNull('paymongo_source_id')
                 ->whereJsonContains('meta->selected_term_id', (int) $validated['selected_term_id'])
-                ->where('created_at', '>=', now()->subMinutes(10)) // 10-min TTL for stale sessions
+                ->where('created_at', '>=', now()->subMinutes(10))
                 ->first();
 
             if ($stalePending) {
-                // Verify the session with PayMongo — if it's no longer 'active',
-                // expire it locally and allow the student to create a new one.
                 $pmResponse = Http::withBasicAuth($this->secretKey, '')
                     ->get("{$this->baseUrl}/checkout_sessions/{$stalePending->paymongo_source_id}");
 
                 $pmStatus = data_get($pmResponse->json(), 'data.attributes.status');
 
-                // PayMongo statuses: 'active', 'paid', 'expired', 'cancelled'
-                if ($pmResponse->ok() && ! in_array($pmStatus, ['active'])) {
-                    // Session is no longer active — safe to expire locally and proceed
+                if ($pmResponse->ok() && ! in_array($pmStatus, ['active'], true)) {
                     $stalePending->update(['status' => 'cancelled']);
                     Log::info('PayMongo session auto-expired, allowing new checkout', [
-                        'user_id'          => $user->id,
-                        'old_session_id'   => $stalePending->paymongo_source_id,
-                        'paymongo_status'  => $pmStatus,
-                        'term_id'          => $validated['selected_term_id'],
+                        'user_id'         => $user->id,
+                        'old_session_id'  => $stalePending->paymongo_source_id,
+                        'paymongo_status' => $pmStatus,
+                        'term_id'         => $validated['selected_term_id'],
                     ]);
                 } elseif ($pmResponse->failed()) {
-                    // PayMongo API unreachable — fail open (allow new checkout).
-                    // Better UX than permanently locking the student out.
                     $stalePending->update(['status' => 'cancelled']);
                     Log::warning('PayMongo API unreachable during session check, expiring locally', [
                         'user_id'        => $user->id,
@@ -194,7 +172,6 @@ class PaymentController extends Controller
                         'http_status'    => $pmResponse->status(),
                     ]);
                 } else {
-                    // Session is genuinely still active — block the duplicate attempt
                     return response()->json([
                         'error' => 'You have an open payment session for this term. Please complete it or wait a few minutes before trying again.',
                     ], 422);
@@ -202,10 +179,7 @@ class PaymentController extends Controller
             }
         }
 
-        // ── DUPLICATE AWAITING_APPROVAL GUARD ─────────────────────────────
-        // Also block if a transaction for this term is already awaiting accounting
-        // approval. There is no reason to open a second PayMongo session for a
-        // payment that hasn't been reviewed yet.
+        // ── DUPLICATE AWAITING_APPROVAL GUARD ─────────────────────────────────
         if ($validated['selected_term_id']) {
             $alreadyPendingApproval = Transaction::where('user_id', $user->id)
                 ->where('kind', 'payment')
@@ -226,7 +200,6 @@ class PaymentController extends Controller
         if ($validated['selected_term_id']) {
             $termInfo = StudentPaymentTerm::find($validated['selected_term_id']);
 
-            // Verify the term actually belongs to this student
             if ($termInfo && $termInfo->assessment?->user_id !== $user->id) {
                 return response()->json(['error' => 'Invalid payment term.'], 403);
             }
@@ -267,12 +240,9 @@ class PaymentController extends Controller
             ], 500);
         }
 
-        $session = $response->json('data');
-
-        // Extract payment_intent_id from PayMongo response for webhook linkage
+        $session         = $response->json('data');
         $paymentIntentId = data_get($session, 'attributes.payment_intent.id');
 
-        // Store a pending Payment row so we can look it up on redirect success
         Payment::create([
             'user_id'               => $user->id,
             'student_assessment_id' => $termInfo?->student_assessment_id ?? null,
@@ -280,21 +250,18 @@ class PaymentController extends Controller
             'description'           => $validated['description'],
             'payment_method'        => 'paymongo_checkout',
             'status'                => 'pending',
-            'paymongo_source_id'    => $session['id'],
+            'paymongo_source_id'    => $session['id'], // stores checkout_session id (cs_...)
             'meta'                  => [
-                'payment_method'    => 'paymongo',
-                'selected_term_id'  => $validated['selected_term_id'],
-                'term_name'         => $termInfo?->term_name ?? 'Payment',
-                'paymongo_checkout' => true,
-                'payment_intent_id' => $paymentIntentId,
+                'payment_method'       => 'paymongo',
+                'selected_term_id'     => $validated['selected_term_id'],
+                'term_name'            => $termInfo?->term_name ?? 'Payment',
+                'paymongo_checkout'    => true,
+                'paymongo_intent_id'   => $paymentIntentId,
             ],
         ]);
 
-        // ✅ NEW: Store payment_intent_id in StudentPaymentTerm so webhook can find it
         if ($termInfo && $paymentIntentId) {
-            $termInfo->update([
-                'payment_intent_id' => $paymentIntentId,
-            ]);
+            $termInfo->update(['payment_intent_id' => $paymentIntentId]);
 
             Log::info('PayMongo payment_intent_id stored for webhook linkage', [
                 'payment_term_id'   => $termInfo->id,
@@ -311,36 +278,20 @@ class PaymentController extends Controller
 
     // ─────────────────────────────────────────────────────────────────────────
     //  PAYMONGO — SUCCESS REDIRECT
-    //
-    //  LIFECYCLE: Student Payment → PayMongo → Accounting Review → Approval
-    //
-    //  When PayMongo confirms payment succeeded, we do NOT immediately mark the
-    //  student's term as paid. Instead we:
-    //    1. Verify the session with PayMongo API
-    //    2. Create a Transaction with status = awaiting_approval
-    //    3. Start the payment_approval workflow
-    //    4. Redirect the student to their account page (awaiting_approval tab)
-    //
-    //  The term balance and accounts.balance are updated ONLY when accounting
-    //  approves the payment via WorkflowApprovalController::approve(), which
-    //  triggers WorkflowService::onWorkflowCompleted() →
-    //  StudentPaymentService::finalizeApprovedPayment().
-    //
-    //  GUARD: Idempotency check prevents processing the same session twice.
     // ─────────────────────────────────────────────────────────────────────────
 
     public function success(Request $request)
     {
-        Log::info('Session ID:', ['id' => $sessionId]);
+        // FIX Bug #1: $sessionId was used before assignment — moved assignment here.
+        $sessionId = $request->query('session_id');
+
+        Log::info('PayMongo success redirect received', ['session_id' => $sessionId]);
 
         if (! $sessionId) {
             Log::warning('PayMongo success redirect missing session_id');
             return redirect()->route('student.account')->with('flash.error', 'Payment session not found.');
         }
 
-        // ── FIND LOCAL PAYMENT RECORD FIRST ─────────────────────────────────
-        // We created this row when the checkout session was opened, so it
-        // must exist. If it doesn't, something went wrong before PayMongo.
         $payment = Payment::where('paymongo_source_id', $sessionId)->first();
 
         if (! $payment) {
@@ -351,8 +302,6 @@ class PaymentController extends Controller
                 ->with('flash.error', 'Payment record not found. Please contact the accounting office.');
         }
 
-        // ── IDEMPOTENCY GUARD ────────────────────────────────────────────────
-        // Already processed — skip all work and redirect cleanly.
         if ($payment->status === 'completed') {
             Log::info('PayMongo success: session already processed, skipping', [
                 'session_id' => $sessionId,
@@ -362,23 +311,16 @@ class PaymentController extends Controller
                 ->with('flash.info', 'This payment was already recorded and is awaiting accounting review.');
         }
 
-        // ── VERIFY WITH PAYMONGO ─────────────────────────────────────────────
-        // Verify the session with PayMongo to get the payment intent ID and
-        // confirm the payment actually succeeded on their end.
         $response = Http::withBasicAuth($this->secretKey, '')
             ->get("{$this->baseUrl}/checkout_sessions/{$sessionId}");
 
         if (! $response->ok()) {
             Log::error('PayMongo session verification failed', [
-                'session_id' => $sessionId,
+                'session_id'  => $sessionId,
                 'http_status' => $response->status(),
                 'body'        => $response->body(),
             ]);
 
-            // If the API is down or the key is misconfigured, do NOT hard-fail.
-            // Mark the payment as needing manual review and still redirect the
-            // student to their account so they can see their pending state.
-            // Accounting can manually verify and process the payment.
             $payment->update([
                 'status' => 'pending',
                 'meta'   => array_merge($payment->meta ?? [], [
@@ -404,13 +346,11 @@ class PaymentController extends Controller
                 'session_id' => $sessionId,
                 'status'     => $paymentIntentStatus,
             ]);
-            // Mark the local pending row as cancelled so it doesn't block future attempts
             $payment->update(['status' => 'cancelled']);
             return redirect()->route('student.account')
                 ->with('flash.warning', 'Payment did not complete. No charges were made. You can try again.');
         }
 
-        // ── DUPLICATE TRANSACTION GUARD ──────────────────────────────────────
         $existingTransaction = Transaction::where('reference', "PAY-{$paymentIntentId}")->first();
 
         if ($existingTransaction) {
@@ -424,7 +364,6 @@ class PaymentController extends Controller
                 ->with('flash.info', 'Payment already recorded. Awaiting accounting review.');
         }
 
-        // ── AUTH GUARD ───────────────────────────────────────────────────────
         $user = auth()->user();
 
         if (! $user) {
@@ -436,13 +375,10 @@ class PaymentController extends Controller
                 ->with('flash.error', 'Your session expired. Please log in and check your payment history.');
         }
 
-        // ── PROCESS PAYMENT INSIDE A TRANSACTION ─────────────────────────────
-        // PayMongo confirmed payment. Create the transaction as AWAITING_APPROVAL
-        // so accounting staff can review and approve it before the term balance
-        // is decremented. This ensures data integrity in the approval lifecycle.
         DB::transaction(function () use ($payment, $user, $paymentIntentId, $sessionId) {
+            // Re-fetch payment inside transaction to avoid stale meta merge
+            $payment = Payment::lockForUpdate()->find($payment->id);
 
-            // 1. Mark the pending Payment row as completed (PayMongo has our money)
             $payment->update([
                 'status'             => 'completed',
                 'description'        => 'PayMongo payment — awaiting accounting review',
@@ -452,9 +388,6 @@ class PaymentController extends Controller
             $termId   = $payment->meta['selected_term_id'] ?? null;
             $termInfo = $termId ? StudentPaymentTerm::find($termId) : null;
 
-            // 2. Create Transaction as AWAITING_APPROVAL — NOT 'paid'.
-            //    Term balance is NOT decremented here. It is decremented only
-            //    after accounting approves via finalizeApprovedPayment().
             $transaction = Transaction::create([
                 'user_id'         => $user->id,
                 'kind'            => 'payment',
@@ -486,11 +419,9 @@ class PaymentController extends Controller
                 'session_id'     => $sessionId,
             ]);
 
-            // 3. Start the payment_approval workflow so accounting sees it
             $this->startPaymentApprovalWorkflow($transaction->id, $user->id);
         });
 
-        // Redirect to account overview History tab with a clear status message
         return redirect()->route('student.account', ['tab' => 'history'])
             ->with('flash.success', 'Payment received! Your payment is now awaiting verification by accounting. You will be notified once it is approved.');
     }
@@ -500,11 +431,6 @@ class PaymentController extends Controller
         $sessionId = $request->query('session_id');
 
         if ($sessionId) {
-            // Expire the pending Payment row immediately so the student can
-            // retry without waiting for the TTL guard to drain.
-            // We only cancel rows that are still 'pending' — never touch
-            // rows that have already been marked 'completed' by a race-winning
-            // success redirect.
             $cancelled = Payment::where('paymongo_source_id', $sessionId)
                 ->where('status', 'pending')
                 ->update(['status' => 'cancelled']);
@@ -580,7 +506,7 @@ class PaymentController extends Controller
                 ->with('success', 'Proof of payment uploaded. Your payment is now awaiting verification.');
 
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('Proof upload failed', [
+            Log::error('Proof upload failed', [
                 'transaction_id' => $transaction->id,
                 'error'          => $e->getMessage(),
             ]);
@@ -607,7 +533,7 @@ class PaymentController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  MISC HELPERS
+    //  BANK TRANSFER — FIX Bug #3 (auth + user_id) and Bug #4 (authorization)
     // ─────────────────────────────────────────────────────────────────────────
 
     public function getBankDetails()
@@ -621,20 +547,43 @@ class PaymentController extends Controller
         ]);
     }
 
+    /**
+     * Submit a manual bank transfer payment for the authenticated student.
+     * FIX Bug #3: Added auth check, user_id from auth, removed raw student_id input.
+     */
     public function submitBankTransfer(Request $request)
     {
+        $user = $request->user();
+
         $validated = $request->validate([
-            'student_id'       => 'required|exists:students,id',
             'amount'           => 'required|numeric|min:100',
             'reference_number' => 'required|string|max:100',
+            'selected_term_id' => 'nullable|exists:student_payment_terms,id',
         ]);
 
+        // Verify term belongs to this student if provided
+        if ($validated['selected_term_id']) {
+            $term = StudentPaymentTerm::find($validated['selected_term_id']);
+            if (! $term || $term->assessment?->user_id !== $user->id) {
+                abort(403, 'Invalid payment term.');
+            }
+        }
+
+        $assessment = isset($term)
+            ? $term->assessment
+            : StudentAssessment::where('user_id', $user->id)->where('status', 'active')->latest()->first();
+
         Payment::create([
-            'student_id'     => $validated['student_id'],
-            'amount'         => $validated['amount'],
-            'payment_method' => 'bank_transfer',
-            'status'         => 'pending',
-            'description'    => 'Bank Transfer - PNB',
+            'user_id'               => $user->id,
+            'student_assessment_id' => $assessment?->id,
+            'amount'                => $validated['amount'],
+            'payment_method'        => 'bank_transfer',
+            'status'                => 'pending',
+            'description'           => 'Bank Transfer - PNB Ref: ' . $validated['reference_number'],
+            'meta'                  => [
+                'reference_number' => $validated['reference_number'],
+                'selected_term_id' => $validated['selected_term_id'] ?? null,
+            ],
         ]);
 
         return response()->json(['message' => 'Bank transfer submitted successfully.']);
@@ -643,13 +592,21 @@ class PaymentController extends Controller
     public function checkStatus(Request $request)
     {
         $request->validate(['payment_id' => 'required|exists:payments,id']);
-        $payment = Payment::findOrFail($request->payment_id);
+
+        $payment = Payment::where('id', $request->payment_id)
+            ->where('user_id', $request->user()->id) // ownership check
+            ->firstOrFail();
 
         return response()->json(['status' => $payment->status]);
     }
 
+    /**
+     * FIX Bug #4: Admin-only authorization added.
+     */
     public function verifyBankTransfer(Request $request, Payment $payment)
     {
+        $this->authorize('verifyPayment', $payment); // requires PaymentPolicy::verifyPayment() — admin only
+
         $request->validate(['verified' => 'required|boolean']);
 
         $payment->update([
@@ -660,16 +617,12 @@ class PaymentController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  PAYMENT METHOD TYPES — Live vs. Test Mode
+    //  HELPERS
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Get available payment method types based on environment.
-     *
-     * Live Mode (sk_live_*): GCash, Card, PayMaya
-     * Test Mode (sk_test_*): Card only
-     *
-     * Note: PayMongo test mode does not support e-wallet testing.
+     * Live mode: GCash, Card, PayMaya
+     * Test mode: Card only (PayMongo restriction)
      */
     private function getPaymentMethodTypes(): array
     {
@@ -677,6 +630,6 @@ class PaymentController extends Controller
 
         return $isLiveMode
             ? ['gcash', 'card', 'paymaya']
-            : ['card']; // GCash/Maya not available in test mode
+            : ['card'];
     }
 }
