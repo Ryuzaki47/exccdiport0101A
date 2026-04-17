@@ -13,16 +13,11 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class FinancialReportsController extends Controller
 {
-    /**
-     * Display financial reports dashboard.
-     */
     public function index(Request $request)
     {
         $schoolYear = $request->get('school_year', now()->year . '-' . (now()->year + 1));
         $semester   = $request->get('semester', '1st Sem');
-
-        // Extract the start year from "2025-2026" → 2025
-        $year = (int) explode('-', $schoolYear)[0];
+        $year       = (int) explode('-', $schoolYear)[0];
 
         // ── Summary stats ────────────────────────────────────────────────────
 
@@ -34,8 +29,6 @@ class FinancialReportsController extends Controller
             ->where('semester', $semester)
             ->sum('total_assessment');
 
-        // FIX: Transaction has its own year and semester columns.
-        // Use them directly instead of whereYear() which ignored semester.
         $totalPaid = Transaction::where('kind', 'payment')
             ->where('status', 'paid')
             ->where('year', $year)
@@ -58,7 +51,6 @@ class FinancialReportsController extends Controller
             ->orderBy('total', 'desc')
             ->get();
 
-        // FIX: scope by year + semester using Transaction's own columns
         $byMonthSummary = Transaction::where('kind', 'payment')
             ->where('status', 'paid')
             ->where('year', $year)
@@ -67,15 +59,13 @@ class FinancialReportsController extends Controller
             ->groupBy('month')
             ->orderBy('month')
             ->get()
-            ->map(fn($item) => [
+            ->map(fn ($item) => [
                 'month' => Carbon::createFromFormat('m', $item->month)->format('M'),
                 'total' => $item->total,
             ]);
 
         // ── Payment method breakdown ─────────────────────────────────────────
 
-        // FIX: was completely unfiltered before — showed all-time totals.
-        // Now scoped to selected school year + semester.
         $paymentMethods = Transaction::where('kind', 'payment')
             ->where('status', 'paid')
             ->where('year', $year)
@@ -86,13 +76,12 @@ class FinancialReportsController extends Controller
             ->get();
 
         // ── Outstanding balances table ───────────────────────────────────────
+        // FIX: was ->with(['student.user', ...]) — StudentAssessment has no
+        // student() relationship. The model points directly to User via user().
 
-        // FIX: was querying StudentPaymentTerm directly → one row per payment
-        // term → duplicate students (Domasian x3). Now grouped at assessment
-        // level so each student = exactly one row.
         $outstandingStudents = StudentAssessment::where('school_year', $schoolYear)
             ->where('semester', $semester)
-            ->with(['student.user', 'paymentTerms'])
+            ->with(['user', 'paymentTerms'])
             ->get()
             ->map(function ($assessment) {
                 $pendingBalance = $assessment->paymentTerms
@@ -100,16 +89,16 @@ class FinancialReportsController extends Controller
                     ->sum('balance');
 
                 return [
-                    'accountId'   => $assessment->student?->user?->account_id ?? 'N/A',
-                    'studentName' => $assessment->student?->user?->name ?? 'Unknown Student',
+                    'accountId'   => $assessment->user?->account_id ?? 'N/A',
+                    'studentName' => $assessment->user?->name ?? 'Unknown Student',
                     'course'      => $assessment->course,
                     'total'       => (float) $assessment->total_assessment,
                     'balance'     => (float) $pendingBalance,
                     'status'      => $pendingBalance > 0 ? 'Pending' : 'Paid',
                 ];
             })
-            ->filter(fn($s) => $s['balance'] > 0)   // only students who owe money
-            ->sortByDesc('balance')                  // highest debt first
+            ->filter(fn ($s) => $s['balance'] > 0)
+            ->sortByDesc('balance')
             ->take(20)
             ->values();
 
@@ -127,8 +116,8 @@ class FinancialReportsController extends Controller
                 'byCourse' => $byCourseSummary,
                 'byMonth'  => $byMonthSummary,
             ],
-            'paymentMethods'     => $paymentMethods,
-            'outstandingStudents'=> $outstandingStudents,
+            'paymentMethods'      => $paymentMethods,
+            'outstandingStudents' => $outstandingStudents,
             'filters' => [
                 'schoolYear' => $schoolYear,
                 'semester'   => $semester,
@@ -138,19 +127,12 @@ class FinancialReportsController extends Controller
         ]);
     }
 
-    /**
-     * Export financial report as PDF.
-     */
     public function export(Request $request)
     {
         $schoolYear = $request->get('school_year', now()->year . '-' . (now()->year + 1));
         $semester   = $request->get('semester', '1st Sem');
+        $year       = (int) explode('-', $schoolYear)[0];
 
-        $year = (int) explode('-', $schoolYear)[0];
-
-        // ── Summary ──────────────────────────────────────────────────────────
-
-        // FIX: totalPaid now uses Transaction's own year + semester columns
         $totalPaid = Transaction::where('kind', 'payment')
             ->where('status', 'paid')
             ->where('year', $year)
@@ -177,22 +159,18 @@ class FinancialReportsController extends Controller
             'totalOutstanding'      => $totalOutstanding,
         ];
 
-        // ── Student list for PDF ─────────────────────────────────────────────
-
-        // FIX: was fetching ALL students with no filter, no sort, no limit.
-        // Now: only students with outstanding balance > 0,
-        // sorted highest balance first, capped at top 20.
+        // FIX: same relationship fix applied here — student.user → user
         $students = StudentAssessment::where('school_year', $schoolYear)
             ->where('semester', $semester)
-            ->with(['student.user', 'paymentTerms'])
+            ->with(['user', 'paymentTerms'])
             ->get()
             ->map(function ($assessment) {
                 $balance = $assessment->paymentTerms->sum('balance');
                 $paid    = $assessment->total_assessment - $balance;
 
                 return [
-                    'accountId'   => $assessment->student?->user?->account_id ?? 'N/A',
-                    'studentName' => $assessment->student?->user?->name ?? 'Unknown Student',
+                    'accountId'   => $assessment->user?->account_id ?? 'N/A',
+                    'studentName' => $assessment->user?->name ?? 'Unknown Student',
                     'course'      => $assessment->course,
                     'total'       => (float) $assessment->total_assessment,
                     'paid'        => (float) $paid,
@@ -200,8 +178,8 @@ class FinancialReportsController extends Controller
                     'status'      => $balance > 0 ? 'Pending' : 'Paid',
                 ];
             })
-            ->filter(fn($s) => $s['balance'] > 0)   // only students who owe money
-            ->sortByDesc('balance')                  // highest balance first
+            ->filter(fn ($s) => $s['balance'] > 0)
+            ->sortByDesc('balance')
             ->take(20)
             ->values();
 
@@ -213,7 +191,6 @@ class FinancialReportsController extends Controller
             'generatedAt' => now(),
         ]);
 
-        // Clean filename: "financial-report-2025-2026-2nd-Sem.pdf"
         $filename = 'financial-report-'
             . $schoolYear . '-'
             . str_replace(' ', '-', $semester)
@@ -222,9 +199,6 @@ class FinancialReportsController extends Controller
         return $pdf->download($filename);
     }
 
-    /**
-     * Get list of available school years.
-     */
     private function getSchoolYears(): array
     {
         $years       = [];

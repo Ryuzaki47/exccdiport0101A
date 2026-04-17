@@ -12,12 +12,15 @@ class StudentAssessment extends Model
     protected $fillable = [
         'assessment_number',
         'user_id',
+        'course',           // added by 2026_03_17 migration
         'year_level',
         'semester',
         'school_year',
-        'lec_units',
+        'lec_units',        // added by 2026_04_11 refactor migration
         'lab_units',
-        'discount_type',
+        'lab_subjects',
+        'discount_type',    // added by 2026_04_17 migration
+        'discount_percentage',
         'is_taking_nstp',
         'tuition_fee',
         'lab_fee',
@@ -26,17 +29,19 @@ class StudentAssessment extends Model
         'status',
     ];
 
-    public const MINIMUM_UNITS = 1.5; // ₱546 floor (1.5 units × ₱364)
+    public const MINIMUM_UNITS = 1.5;
 
     protected $casts = [
-        'lec_units'        => 'integer',
-        'lab_units'        => 'integer',
-        'discount_type'    => 'string',
-        'is_taking_nstp'   => 'boolean',
-        'tuition_fee'      => 'decimal:2',
-        'lab_fee'          => 'decimal:2',
-        'misc_fee'         => 'decimal:2',
-        'total_assessment' => 'decimal:2',
+        'lec_units'            => 'integer',
+        'lab_units'            => 'integer',
+        'lab_subjects'         => 'integer',
+        'discount_percentage'  => 'decimal:2',
+        'discount_type'        => 'string',
+        'is_taking_nstp'       => 'boolean',
+        'tuition_fee'          => 'decimal:2',
+        'lab_fee'              => 'decimal:2',
+        'misc_fee'             => 'decimal:2',
+        'total_assessment'     => 'decimal:2',
     ];
 
     // ─── Relationships ────────────────────────────────────────────────────────
@@ -71,7 +76,7 @@ class StudentAssessment extends Model
 
     public function getMiscFeeAttribute(): float
     {
-        return (float) config('fees.misc_fee_fixed', 4700.00);
+        return (float) ($this->attributes['misc_fee'] ?? 0);
     }
 
     public function getOutstandingBalanceAttribute(): float
@@ -81,27 +86,10 @@ class StudentAssessment extends Model
 
     // ─── Static Methods ───────────────────────────────────────────────────────
 
-    /**
-     * Generate a unique, race-condition-safe assessment number.
-     *
-     * FIX: Uses DB-level MAX() on the extracted numeric suffix instead of
-     * ORDER BY on a string column. This is immune to lexicographic sort
-     * bugs and correctly handles all existing records regardless of status.
-     *
-     * IMPORTANT: This method MUST be called inside a DB::transaction() that
-     * also holds a lockForUpdate() on the relevant rows — the controller's
-     * store() method already does this. Do NOT call this outside a transaction.
-     *
-     * Format: ASMT-{year}-{sequential zero-padded to 4 digits}
-     * Example: ASMT-2026-0001
-     */
     public static function generateAssessmentNumber(): string
     {
         $year = date('Y');
 
-        // Extract the numeric suffix from all records for this year using
-        // a DB-level CAST, so we get the true numeric maximum — not a
-        // lexicographic string maximum which breaks on 10, 11, etc.
         $maxNum = DB::table('student_assessments')
             ->where('assessment_number', 'like', "ASMT-{$year}-%")
             ->selectRaw("MAX(CAST(SUBSTRING_INDEX(assessment_number, '-', -1) AS UNSIGNED)) as max_num")
