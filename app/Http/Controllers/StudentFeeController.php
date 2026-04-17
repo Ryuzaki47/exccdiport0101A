@@ -305,6 +305,7 @@ class StudentFeeController extends Controller
                 $assessment = StudentAssessment::create([
                     'assessment_number' => $assessmentNumber,
                     'user_id'           => $validated['user_id'],
+                    'course'            => $student->course,
                     'semester'          => $validated['semester'],
                     'school_year'       => $validated['school_year'],
                     'lec_units'         => $validated['lec_units'],
