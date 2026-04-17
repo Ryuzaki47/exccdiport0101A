@@ -258,6 +258,26 @@ Route::middleware(['auth', 'verified', 'role:admin,accounting'])->group(function
     Route::post('/approvals/{approval}/reject', [WorkflowApprovalController::class, 'reject'])->name('approvals.reject');
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIL INTEGRATION TEST — Remove before going fully live in production
+// Access: GET /test-resend
+// Sends a synchronous test email via Resend to the hardcoded address.
+// ─────────────────────────────────────────────────────────────────────────────
+if (app()->environment(['local', 'staging'])) {
+    Route::get('/test-resend', function () {
+        \Illuminate\Support\Facades\Notification::route('mail', 'ryuzakikamisama@gmail.com')
+            ->notify(new \App\Notifications\TestNotification());
+
+        return response()->json([
+            'status'   => 'sent',
+            'mailer'   => config('mail.default'),
+            'from'     => config('mail.from.address'),
+            'to'       => 'ryuzakikamisama@gmail.com',
+            'env'      => app()->environment(),
+        ]);
+    })->name('test.resend');
+}
+
 // ============================================
 // SETTINGS ROUTES
 // Appearance is defined in routes/settings.php — no duplicate here.
