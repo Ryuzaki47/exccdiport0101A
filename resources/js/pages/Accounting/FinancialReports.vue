@@ -16,6 +16,7 @@ interface PaymentMethod {
 
 interface OutstandingStudent {
     accountId: string
+    latestRef: string
     studentName: string
     course: string
     total: number
@@ -290,6 +291,9 @@ const exportPDF = () => {
                                         Account ID
                                     </th>
                                     <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                        Latest Reference
+                                    </th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                                         Student Name
                                     </th>
                                     <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -305,7 +309,8 @@ const exportPDF = () => {
                             </thead>
                             <tbody class="divide-y divide-border">
                                 <tr v-for="(student, index) in outstandingStudents" :key="index" class="hover:bg-muted/30">
-                                    <td class="px-4 py-3 text-sm text-muted-foreground">{{ student.accountId }}</td>
+                                    <td class="px-4 py-3 text-sm font-mono text-muted-foreground">{{ student.accountId }}</td>
+                                    <td class="px-4 py-3 text-sm font-mono text-indigo-600">{{ student.latestRef }}</td>
                                     <td class="px-4 py-3 text-sm font-medium">{{ student.studentName }}</td>
                                     <td class="px-4 py-3 text-sm text-muted-foreground">{{ student.course }}</td>
                                     <td class="px-4 py-3 text-right text-sm">{{ formatCurrency(student.total) }}</td>

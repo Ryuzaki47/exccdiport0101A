@@ -77,8 +77,8 @@
         .text-right  { text-align: right; }
         .text-center { text-align: center; }
 
-        .col-acct   { width: 9%; white-space: nowrap; }
-        .col-accno  { width: 12%; white-space: nowrap; font-family: monospace; font-size: 9px; color: #4f46e5; }
+        .col-acct   { width: 10%; white-space: nowrap; }
+        .col-ref    { width: 13%; white-space: nowrap; font-family: monospace; font-size: 9px; color: #4f46e5; }
         .col-name   { width: 16%; }
         .col-course { width: 28%; }
         .col-amt    { width: 12%; }
@@ -150,7 +150,7 @@
         <thead>
             <tr>
                 <th class="col-acct">Account ID</th>
-                <th class="col-accno">Account No.</th>
+                <th class="col-ref">Latest Reference</th>
                 <th class="col-name">Student Name</th>
                 <th class="col-course">Course</th>
                 <th class="col-amt text-right">Total Assessment</th>
@@ -164,7 +164,7 @@
                     <td class="col-acct" style="font-family: monospace; font-size:9px;">
                         {{ $student['accountId'] }}
                     </td>
-                    <td class="col-accno">{{ $student['accountNumber'] }}</td>
+                    <td class="col-ref">{{ $student['latestRef'] }}</td>
                     <td class="col-name">{{ $student['studentName'] }}</td>
                     <td class="col-course">{{ $student['course'] ?? 'N/A' }}</td>
                     <td class="col-amt text-right">
