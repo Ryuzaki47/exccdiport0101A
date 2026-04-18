@@ -83,7 +83,7 @@ class FinancialReportsController extends Controller
             ->where('semester', $semester)
             ->with(['user', 'paymentTerms'])
             ->get()
-            ->map(function ($assessment) use ($schoolYear, $semester) {
+            ->map(function ($assessment) use ($year, $semester) {
                 $pendingBalance = $assessment->paymentTerms
                     ->where('status', 'pending')
                     ->sum('balance');
@@ -92,7 +92,7 @@ class FinancialReportsController extends Controller
                 $latestRef = $assessment->user?->transactions()
                     ->where('kind', 'payment')
                     ->where('status', 'paid')
-                    ->where('year', explode('-', $schoolYear)[0])
+                    ->where('year', $year)
                     ->where('semester', $semester)
                     ->orderByDesc('paid_at')
                     ->value('reference');
@@ -101,7 +101,7 @@ class FinancialReportsController extends Controller
                     'accountId'   => $assessment->user?->account_id ?? 'N/A',
                     'latestRef'   => $latestRef ?? '—',
                     'studentName' => $assessment->user?->name ?? 'Unknown Student',
-                    'course'      => $assessment->course,
+                    'course'      => $assessment->course ?? $assessment->user?->course ?? 'N/A',
                     'total'       => (float) $assessment->total_assessment,
                     'balance'     => (float) $pendingBalance,
                     'status'      => $pendingBalance > 0 ? 'Pending' : 'Paid',
@@ -174,14 +174,14 @@ class FinancialReportsController extends Controller
             ->where('semester', $semester)
             ->with(['user', 'paymentTerms'])
             ->get()
-            ->map(function ($assessment) use ($schoolYear, $semester) {
+            ->map(function ($assessment) use ($year, $semester) {
                 $balance = $assessment->paymentTerms->sum('balance');
                 $paid    = $assessment->total_assessment - $balance;
 
                 $latestRef = $assessment->user?->transactions()
                     ->where('kind', 'payment')
                     ->where('status', 'paid')
-                    ->where('year', explode('-', $schoolYear)[0])
+                    ->where('year', $year)
                     ->where('semester', $semester)
                     ->orderByDesc('paid_at')
                     ->value('reference');
@@ -190,7 +190,7 @@ class FinancialReportsController extends Controller
                     'accountId'   => $assessment->user?->account_id ?? 'N/A',
                     'latestRef'   => $latestRef ?? '—',
                     'studentName' => $assessment->user?->name ?? 'Unknown Student',
-                    'course'      => $assessment->course,
+                    'course'      => $assessment->course ?? $assessment->user?->course ?? 'N/A',
                     'total'       => (float) $assessment->total_assessment,
                     'paid'        => (float) $paid,
                     'balance'     => (float) $balance,
