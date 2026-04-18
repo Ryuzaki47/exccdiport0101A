@@ -27,7 +27,7 @@ import {
     FlaskConical,
     Plus,
 } from 'lucide-vue-next';
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -395,11 +395,16 @@ interface TxGroup {
     balance: number;
 }
 
+// All payment-kind transactions for this student (unfiltered — used by the Ledger)
+const allPaymentTransactions = computed(() =>
+    (props.transactions ?? []).filter((t: any) => t.kind === 'payment'),
+);
+
+// Transactions filtered to the selected assessment — used only by Payment History card
 const filteredTransactions = computed(() => {
-    const paymentsOnly = (props.transactions ?? []).filter((t: any) => t.kind === 'payment');
-    if (!selectedAssessmentId.value || !selectedAssessment.value) return paymentsOnly;
+    if (!selectedAssessmentId.value || !selectedAssessment.value) return allPaymentTransactions.value;
     const assessment = selectedAssessment.value;
-    return paymentsOnly.filter((t: any) => {
+    return allPaymentTransactions.value.filter((t: any) => {
         const startYear = parseInt(String(assessment.school_year?.split('-')[0] ?? ''), 10);
         return (
             parseInt(String(t.year), 10) === startYear &&
@@ -411,7 +416,7 @@ const filteredTransactions = computed(() => {
 const transactionsByTerm = computed((): TxGroup[] => {
     const groups: Record<string, { transactions: any[]; assessmentId: number | null }> = {};
 
-    for (const t of filteredTransactions.value) {
+    for (const t of allPaymentTransactions.value) {
         let key: string;
         if (t.year && t.semester) {
             const startYear = parseInt(String(t.year), 10);
@@ -434,19 +439,20 @@ const transactionsByTerm = computed((): TxGroup[] => {
         }
     }
 
-    const assessmentTotal = parseFloat(
-        String(
-            selectedAssessment.value?.total_assessment ??
-                props.assessment?.total_assessment ??
-                0,
-        ),
-    );
-
     return Object.entries(groups)
         .map(([key, group]) => {
             const totalPaidAmt = group.transactions
                 .filter((t) => t.kind === 'payment' && t.status === 'paid')
                 .reduce((s, t) => s + parseFloat(t.amount), 0);
+
+            // Use each group's own assessment total, not the selected assessment
+            const groupAssessment = group.assessmentId
+                ? (props.allAssessments ?? []).find((a) => a.id === group.assessmentId)
+                : null;
+            const assessmentTotal = parseFloat(
+                String(groupAssessment?.total_assessment ?? selectedAssessment.value?.total_assessment ?? props.assessment?.total_assessment ?? 0),
+            );
+
             return {
                 key,
                 assessmentId: group.assessmentId,
@@ -466,8 +472,19 @@ const transactionsByTerm = computed((): TxGroup[] => {
 
 const expandedTerms = ref<Record<string, boolean>>({});
 const toggleTerm = (key: string) => {
-    expandedTerms.value[key] = !expandedTerms.value[key];
+    expandedTerms.value = { ...expandedTerms.value, [key]: !expandedTerms.value[key] };
 };
+
+// ─── Auto-expand helper ───────────────────────────────────────────────────────
+function autoExpandCurrentTerm() {
+    if (transactionsByTerm.value.length === 0) return;
+    const matchKey = currentAssessmentTermKey.value;
+    const autoKey =
+        matchKey && transactionsByTerm.value.some((g) => g.key === matchKey)
+            ? matchKey
+            : transactionsByTerm.value[0].key;
+    expandedTerms.value = { [autoKey]: true };
+}
 
 const currentAssessmentTermKey = computed<string | null>(() => {
     if (!selectedAssessment.value?.school_year || !selectedAssessment.value?.semester)
@@ -700,18 +717,13 @@ watch(
         paymentForm.assessment_id = newId ?? props.assessment?.id ?? null;
         paymentForm.reset();
         paymentForm.clearErrors();
-        expandedTerms.value = {};
-        if (transactionsByTerm.value.length > 0) {
-            const matchKey = currentAssessmentTermKey.value;
-            const autoKey =
-                matchKey &&
-                transactionsByTerm.value.some((g) => g.key === matchKey)
-                    ? matchKey
-                    : transactionsByTerm.value[0].key;
-            expandedTerms.value[autoKey] = true;
-        }
+        autoExpandCurrentTerm();
     },
 );
+
+onMounted(() => {
+    autoExpandCurrentTerm();
+});
 
 // ─── ✅ FIXED submitPayment ──────────────────────────────────────────────────
 // Original code used paymentForm.post() which relies on Inertia's internal
@@ -833,7 +845,7 @@ const getStudentStatusColor = (status: string) => {
                         title="Select semester to view"
                     >
                         <option v-for="a in allAssessments" :key="a.id" :value="a.id">
-                            {{ a.year_level }} — {{ a.semester }} {{ a.school_year }}
+                            {{ a.year_level }} — {{ a.semester }} Sem {{ a.school_year }}
                         </option>
                     </select>
                     <a :href="exportUrl" target="_blank">

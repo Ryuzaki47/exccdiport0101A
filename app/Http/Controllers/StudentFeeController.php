@@ -387,7 +387,7 @@ class StudentFeeController extends Controller
                 'course'           => $user->course,
                 'semester'         => $a->semester,
                 'school_year'      => $a->school_year,
-                'year_level'       => $user->year_level,
+                'year_level'       => $a->year_level ?? $user->year_level,
                 'total_assessment' => (float) $a->total_assessment,
                 'tuition_fee'      => (float) $a->tuition_fee,
                 'lab_fee'          => (float) $a->lab_fee,
@@ -435,25 +435,31 @@ class StudentFeeController extends Controller
             ];
         }
 
-        $payments = \App\Models\Payment::where('user_id', $userId)
-            ->with('assessment')
-            ->orderByDesc('created_at')
-            ->get()
-            ->map(fn ($p) => [
-                'id'               => $p->id,
-                'assessment_id'    => $p->student_assessment_id,
-                'amount'           => (float) $p->amount,
-                'payment_method'   => $p->payment_method,
-                'reference_number' => $p->paymongo_payment_id
-                    ?? $p->meta['reference_number']
-                    ?? ('PAY-' . strtoupper(substr(md5($p->id . $p->created_at), 0, 8))),
-                'description'      => $p->description ?? 'Payment',
-                'status'           => $p->status,
-                'paid_at'          => $p->created_at?->toDateString(),
-                'school_year'      => $p->assessment?->school_year,
-                'semester'         => $p->assessment?->semester,
-            ])
-            ->all();
+        // Payments are stored against students.id (not users.id).
+        // Querying by user_id returns nothing because that column is nullable
+        // and not populated by StudentPaymentService::processPayment().
+        $studentRecord = $user->student;
+        $payments = $studentRecord
+            ? \App\Models\Payment::where('student_id', $studentRecord->id)
+                ->with('assessment')
+                ->orderByDesc('created_at')
+                ->get()
+                ->map(fn ($p) => [
+                    'id'               => $p->id,
+                    'assessment_id'    => $p->student_assessment_id,
+                    'amount'           => (float) $p->amount,
+                    'payment_method'   => $p->payment_method,
+                    'reference_number' => $p->paymongo_payment_id
+                        ?? ($p->meta['reference_number'] ?? null)
+                        ?? ('PAY-' . strtoupper(substr(md5($p->id . $p->created_at), 0, 8))),
+                    'description'      => $p->description ?? 'Payment',
+                    'status'           => $p->status,
+                    'paid_at'          => $p->created_at?->toDateString(),
+                    'school_year'      => $p->assessment?->school_year,
+                    'semester'         => $p->assessment?->semester,
+                ])
+                ->all()
+            : [];
 
         $transactions = Transaction::where('user_id', $userId)
             ->where('kind', 'payment')
@@ -478,35 +484,35 @@ class StudentFeeController extends Controller
             'course'           => $user->course,
             'semester'         => $assessment->semester,
             'school_year'      => $assessment->school_year,
-            'year_level'       => $user->year_level,
+            'year_level'       => $assessment->year_level ?? $user->year_level,
             'lec_units'        => $assessment->lec_units,
             'lab_units'        => $assessment->lab_units,
             'total_assessment' => (float) $assessment->total_assessment,
-            'tuition_fee'      => $feeBreakdown['tuitionFee'] ?? 0,
-            'lab_fee'          => $feeBreakdown['labFee'] ?? 0,
-            'misc_fee'         => $feeBreakdown['miscFee'] ?? 0,
-            'other_fees'       => ($feeBreakdown['labFee'] ?? 0) + ($feeBreakdown['miscFee'] ?? 0),
+            'tuition_fee'      => (float) $assessment->tuition_fee,
+            'lab_fee'          => (float) $assessment->lab_fee,
+            'misc_fee'         => (float) $assessment->misc_fee,
+            'other_fees'       => (float) ($assessment->lab_fee + $assessment->misc_fee),
             'fee_breakdown'    => [
                 [
                     'category' => 'Tuition',
                     'name'     => 'Tuition Fee',
                     'code'     => 'TUI',
                     'units'    => $assessment->lec_units,
-                    'amount'   => $feeBreakdown['tuitionFee'] ?? 0,
+                    'amount'   => (float) $assessment->tuition_fee,
                 ],
                 [
                     'category' => 'Laboratory',
                     'name'     => 'Laboratory Fee',
                     'code'     => 'LAB',
                     'units'    => $assessment->lab_units,
-                    'amount'   => $feeBreakdown['labFee'] ?? 0,
+                    'amount'   => (float) $assessment->lab_fee,
                 ],
                 [
                     'category' => 'Miscellaneous',
                     'name'     => 'Miscellaneous Fee',
                     'code'     => 'MISC',
                     'units'    => null,
-                    'amount'   => $feeBreakdown['miscFee'] ?? 0,
+                    'amount'   => (float) $assessment->misc_fee,
                 ],
             ],
             'status'       => $assessment->status,
@@ -533,11 +539,11 @@ class StudentFeeController extends Controller
             'allAssessments' => $allAssessmentsFormatted,
             'transactions'   => $transactions,
             'payments'       => $payments,
-            'feeBreakdown'   => [
-                ['category' => 'Tuition',       'total' => $feeBreakdown['tuitionFee'] ?? 0, 'items' => 1],
-                ['category' => 'Laboratory',    'total' => $feeBreakdown['labFee'] ?? 0,     'items' => 1],
-                ['category' => 'Miscellaneous', 'total' => $feeBreakdown['miscFee'] ?? 0,    'items' => 1],
-            ],
+            'feeBreakdown'   => $assessment ? [
+                ['category' => 'Tuition',       'total' => (float) $assessment->tuition_fee, 'items' => 1],
+                ['category' => 'Laboratory',    'total' => (float) $assessment->lab_fee,     'items' => 1],
+                ['category' => 'Miscellaneous', 'total' => (float) $assessment->misc_fee,    'items' => 1],
+            ] : [],
             'miscItems'                   => config('fees.misc_items', []),
             'backUrl'                     => route('student-fees.index'),
             'enrolledSubjectsByAssessment' => [],
