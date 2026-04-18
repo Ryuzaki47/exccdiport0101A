@@ -117,10 +117,10 @@ class DatabaseSeeder extends Seeder
         $completedWorkflows    = \App\Models\WorkflowInstance::where('status', 'completed')->count();
         $pendingApprovals      = \App\Models\WorkflowApproval::where('status', 'pending')->count();
 
-        // Sample assessment to show computed total
-        $sampleAssessment = \App\Models\StudentAssessment::first();
+        // Fee config for summary display
         $tuitionRate = (float) config('fees.tuition_per_lec_unit', 364.00);
-        $labRate     = (float) config('fees.lab_fee_per_unit', 1656.00);
+        $labRate     = (float) config('fees.lab.per_unit', 1656.00);
+        $entrepFee   = (float) config('fees.lab.entrepreneurship_fee', 600.00);
         $miscFee     = (float) config('fees.misc_fee_fixed', 4700.00);
 
         $this->command->table(
@@ -154,15 +154,14 @@ class DatabaseSeeder extends Seeder
         $this->command->info('💡 FEE FORMULA (config/fees.php)');
         $this->command->info('═══════════════════════════════════════════════════════');
         $this->command->info("  Tuition:  lec_units × ₱{$tuitionRate} per unit");
-        $this->command->info("  Lab Fee:  lab_subjects × ₱{$labRate} per subject");
+        $this->command->info("  Lab Fee:  (lab_units × ₱{$labRate}) + ₱{$entrepFee} entrep fee");
         $this->command->info("  Misc Fee: ₱{$miscFee} (fixed per semester)");
         $this->command->info('  ─────────────────────────────────────────────────────');
-        if ($sampleAssessment) {
-            $sampleTotal = ($sampleAssessment->lec_units * $tuitionRate)
-                         + ($sampleAssessment->lab_subjects * $labRate)
-                         + $miscFee;
-            $this->command->info("  Example (1st Year, 18 lec + 3 lab_subjects):  ₱" . number_format($sampleTotal, 2));
-        }
+        // Example: 1st Year 1st Sem, no discount — 18 lec, 3 lab
+        $exampleTuition = 18 * $tuitionRate;
+        $exampleLab     = (3 * $labRate) + $entrepFee;
+        $exampleTotal   = $exampleTuition + $exampleLab + $miscFee;
+        $this->command->info("  Example (1st Year, 18 lec + 3 lab, no discount):  ₱" . number_format($exampleTotal, 2));
 
         $this->command->newLine();
         $this->command->info('🔐 DEFAULT CREDENTIALS');
@@ -184,7 +183,7 @@ class DatabaseSeeder extends Seeder
         $this->command->info('💡 TIPS');
         $this->command->info('═══════════════════════════════════════════════════════');
         $this->command->info('• All assessments use the formula from config/fees.php — no hardcoded totals');
-        $this->command->info('• lab_subjects drives the lab fee (not lab_units — that is display only)');
+        $this->command->info('• lab_units drives the lab fee count; entrep fee (₱600) auto-applied when lab_units > 0');
         $this->command->info('• No charge Transactions are seeded — charges come only from admin UI');
         $this->command->info('• Payment Transactions exist only for the 4 named test students');
         $this->command->info('• transaction.history@ student has 6 accordion sections (5 paid + 1 current)');

@@ -66,11 +66,28 @@ class AdditionalStudentSeeder extends Seeder
      * lec_units → tuition formula: lec_units × ₱364
      * lab_units → lab fee formula: lab_units × ₱1,656
      */
+    /**
+     * Unit map per year level AND semester.
+     * lec_units_for_fee is the decimal value used in tuition computation
+     * (differs from lec_units only for 3rd Year 2nd Sem: 18.5 per spec).
+     */
     private array $unitMap = [
-        '1st Year' => ['lec_units' => 18, 'lab_units' => 3],
-        '2nd Year' => ['lec_units' => 18, 'lab_units' => 3],
-        '3rd Year' => ['lec_units' => 15, 'lab_units' => 2],
-        '4th Year' => ['lec_units' => 12, 'lab_units' => 1],
+        '1st Year' => [
+            '1st Sem' => ['lec_units' => 18, 'lab_units' => 3, 'lec_units_for_fee' => 18.0],
+            '2nd Sem' => ['lec_units' => 18, 'lab_units' => 3, 'lec_units_for_fee' => 18.0],
+        ],
+        '2nd Year' => [
+            '1st Sem' => ['lec_units' => 18, 'lab_units' => 3, 'lec_units_for_fee' => 18.0],
+            '2nd Sem' => ['lec_units' => 18, 'lab_units' => 3, 'lec_units_for_fee' => 18.0],
+        ],
+        '3rd Year' => [
+            '1st Sem' => ['lec_units' => 15, 'lab_units' => 2, 'lec_units_for_fee' => 15.0],
+            '2nd Sem' => ['lec_units' => 18, 'lab_units' => 3, 'lec_units_for_fee' => 18.5], // per spec
+        ],
+        '4th Year' => [
+            '1st Sem' => ['lec_units' => 12, 'lab_units' => 1, 'lec_units_for_fee' => 12.0],
+            '2nd Sem' => ['lec_units' => 12, 'lab_units' => 1, 'lec_units_for_fee' => 12.0],
+        ],
     ];
 
     private int $accountNumberCounter = 0;
@@ -348,14 +365,18 @@ class AdditionalStudentSeeder extends Seeder
         }
 
         // ── Resolve units and compute total ───────────────────────────────────
-        $units       = $this->unitMap[$yearLevel] ?? ['lec_units' => 18, 'lab_units' => 3];
+        // Unit map is now keyed by [yearLevel][semester] for per-semester accuracy.
+        $units       = $this->unitMap[$yearLevel][$semester]
+                    ?? ['lec_units' => 18, 'lab_units' => 3, 'lec_units_for_fee' => 18.0];
         $tuitionRate = (float) config('fees.tuition_per_lec_unit', 364.00);
-        $labRate     = (float) config('fees.lab_fee_per_unit', 1656.00);
+        $labRate     = (float) config('fees.lab.per_unit', 1656.00);
+        $entrepFee   = (float) config('fees.lab.entrepreneurship_fee', 600.00);
         $miscFee     = (float) config('fees.misc_fee_fixed', 4700.00);
 
-        $tuition      = round($units['lec_units'] * $tuitionRate, 2);
-        $labFee       = round($units['lab_units'] * $labRate, 2);
-        $grandTotal   = round($tuition + $labFee + $miscFee, 2);
+        $tuition    = round($units['lec_units_for_fee'] * $tuitionRate, 2);
+        $entrep     = $units['lab_units'] > 0 ? $entrepFee : 0.00;
+        $labFee     = round(($units['lab_units'] * $labRate) + $entrep, 2);
+        $grandTotal = round($tuition + $labFee + $miscFee, 2);
 
         $yearNum = (int) explode('-', $schoolYear)[0];
         $allPaid = count($paidOrders) === 5;
@@ -363,12 +384,18 @@ class AdditionalStudentSeeder extends Seeder
         // ── Assessment record ──────────────────────────────────────────────────
         $assessment = StudentAssessment::create([
             'user_id'           => $user->id,
+            'course'            => $user->course,
             'assessment_number' => StudentAssessment::generateAssessmentNumber(),
             'year_level'        => $yearLevel,
             'semester'          => $semester,
             'school_year'       => $schoolYear,
             'lec_units'         => $units['lec_units'],
             'lab_units'         => $units['lab_units'],
+            'discount_type'     => 'none',
+            'is_taking_nstp'    => false,
+            'tuition_fee'       => $tuition,
+            'lab_fee'           => $labFee,
+            'misc_fee'          => $miscFee,
             'total_assessment'  => $grandTotal,
             'status'            => 'active',
         ]);
@@ -601,13 +628,14 @@ class AdditionalStudentSeeder extends Seeder
 
         // Fee breakdown for reference
         $tuitionRate = (float) config('fees.tuition_per_lec_unit', 364.00);
-        $labRate     = (float) config('fees.lab_fee_per_unit', 1656.00);
+        $labRate     = (float) config('fees.lab.per_unit', 1656.00);
+        $entrepFee   = (float) config('fees.lab.entrepreneurship_fee', 600.00);
         $miscFee     = (float) config('fees.misc_fee_fixed', 4700.00);
 
         $this->cmd()->info('');
         $this->cmd()->info('  FEE FORMULA USED:');
-        $this->cmd()->info("  Tuition: lec_units × ₱{$tuitionRate}");
-        $this->cmd()->info("  Lab:     lab_subjects × ₱{$labRate}");
+        $this->cmd()->info("  Tuition: lec_units_for_fee × ₱{$tuitionRate}");
+        $this->cmd()->info("  Lab:     (lab_units × ₱{$labRate}) + ₱{$entrepFee} entrep fee");
         $this->cmd()->info("  Misc:    ₱{$miscFee} (fixed per semester)");
 
         $this->cmd()->info('');
