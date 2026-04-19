@@ -105,6 +105,19 @@ const formatDueDate = (dueDateStr: string | null | undefined): string => {
     return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 };
 
+/**
+ * Format a "YYYY-MM-DD" date string from the server for display.
+ * Appending T12:00:00 prevents the date from shifting back one day due
+ * to UTC-to-local conversion in Philippine timezone (UTC+8).
+ */
+const formatAdminDate = (dateStr: string | null | undefined): string => {
+    if (!dateStr) return '';
+    const d = dateStr.split('T')[0]; // strip any time component defensively
+    return new Date(d + 'T12:00:00').toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+    });
+};
+
 const todayStr = new Date().toLocaleDateString('en-CA'); // "YYYY-MM-DD" in local time
 
 const isActive = (notification: Notification) => {
@@ -249,18 +262,9 @@ const isActive = (notification: Notification) => {
                             <!-- Visibility window -->
                             <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 font-medium text-gray-600">
                                 <Calendar class="h-3 w-3" />
-                                {{
-                                    new Date(notification.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                                }}
+                                {{ formatAdminDate(notification.start_date) }}
                                 <span v-if="notification.end_date">
-                                    →
-                                    {{
-                                        new Date(notification.end_date).toLocaleDateString('en-US', {
-                                            month: 'short',
-                                            day: 'numeric',
-                                            year: 'numeric',
-                                        })
-                                    }}
+                                    → {{ formatAdminDate(notification.end_date) }}
                                 </span>
                                 <span v-else>→ ongoing</span>
                             </span>
@@ -274,7 +278,7 @@ const isActive = (notification: Notification) => {
                             </span>
 
                             <!-- Created at -->
-                            <span class="ml-auto text-gray-400"> Created {{ new Date(notification.created_at).toLocaleDateString() }} </span>
+                            <span class="ml-auto text-gray-400"> Created {{ formatAdminDate(notification.created_at) }} </span>
                         </div>
 
                         <!-- Actions -->

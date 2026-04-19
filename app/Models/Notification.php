@@ -84,7 +84,14 @@ class Notification extends Model
                             ->orWhere('target_role', 'all');
                      })
                      ->where(function ($q4) use ($user) {
-                         $q4->whereNull('target_term_name')
+                         // Match null OR empty string.
+                         // Empty string occurs when admin submits the form with "No filter" selected
+                         // before the normalization fix was applied. This ensures existing bad records
+                         // in the database start working immediately without needing a migration.
+                         $q4->where(function ($inner) {
+                                $inner->whereNull('target_term_name')
+                                      ->orWhere('target_term_name', '');
+                            })
                             ->orWhereExists(function ($sub) use ($user) {
                                 $sub->from('student_payment_terms')
                                     ->join('student_assessments', 'student_assessments.id', '=', 'student_payment_terms.student_assessment_id')

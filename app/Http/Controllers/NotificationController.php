@@ -6,6 +6,7 @@ use App\Models\Notification;
 use App\Models\StudentPaymentTerm;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
@@ -17,8 +18,31 @@ class NotificationController extends Controller
         $user = $request->user();
 
         if ($user->isAdmin()) {
-            // Admin sees ALL notifications for management — no active/date filtering
-            $notifications = Notification::orderByDesc('created_at')->get();
+            // Admin sees ALL notifications for management — no active/date filtering.
+            // Dates are mapped to plain "YYYY-MM-DD" strings so the frontend
+            // isActive() and date display helpers don't suffer UTC timezone drift.
+            $notifications = Notification::orderByDesc('created_at')
+                ->get()
+                ->map(fn ($n) => [
+                    'id'                      => $n->id,
+                    'title'                   => $n->title,
+                    'message'                 => $n->message,
+                    'type'                    => $n->type,
+                    'target_role'             => $n->target_role,
+                    'start_date'              => $n->start_date?->toDateString(),
+                    'end_date'                => $n->end_date?->toDateString(),
+                    'due_date'                => $n->due_date?->toDateString(),
+                    'payment_term_id'         => $n->payment_term_id,
+                    'is_active'               => $n->is_active,
+                    'is_complete'             => $n->is_complete,
+                    'target_term_name'        => $n->target_term_name,
+                    'term_ids'                => $n->term_ids,
+                    'trigger_days_before_due' => $n->trigger_days_before_due,
+                    'user_id'                 => $n->user_id,
+                    'dismissed_at'            => $n->dismissed_at?->toDateTimeString(),
+                    'created_at'              => $n->created_at->toDateString(),
+                    'updated_at'              => $n->updated_at->toDateString(),
+                ]);
 
             return Inertia::render('Admin/Notifications/Index', [
                 'notifications' => $notifications,
@@ -26,24 +50,29 @@ class NotificationController extends Controller
             ]);
         }
 
-        // Students and accounting land on the student-facing read-only page
+        // Non-admin users (students, accounting) land on the student-facing page
         return $this->studentIndex($request);
     }
 
     /**
      * Student-facing notifications page.
-     * Scoped to the authenticated user, active + within date range only.
-     * Dates are mapped to plain "YYYY-MM-DD" strings — never raw Carbon objects —
-     * so the frontend can compare them as strings without timezone drift.
+     *
+     * Scoped to the authenticated user: active + within date range + due-date trigger.
+     * Dates are mapped to plain "YYYY-MM-DD" strings — never raw Carbon ISO datetimes —
+     * so the frontend can display and compare them without timezone drift.
+     *
+     * Also marks all matching notifications as read so the bell badge resets.
      */
     public function studentIndex(Request $request): \Inertia\Response
     {
         $user = $request->user();
 
-        $notifications = Notification::active()
+        $baseQuery = fn () => Notification::active()
             ->forUser($user->id)
             ->withinDateRange()
-            ->forDueDateTrigger($user)
+            ->forDueDateTrigger($user);
+
+        $notifications = $baseQuery()
             ->orderByDesc('created_at')
             ->get()
             ->map(fn ($n) => [
@@ -51,20 +80,52 @@ class NotificationController extends Controller
                 'title'           => $n->title,
                 'message'         => $n->message,
                 'type'            => $n->type,
-                'start_date'      => $n->start_date?->toDateString(),   // "YYYY-MM-DD" — no timezone
+                'start_date'      => $n->start_date?->toDateString(),
                 'end_date'        => $n->end_date?->toDateString(),
                 'due_date'        => $n->due_date?->toDateString(),
                 'payment_term_id' => $n->payment_term_id,
                 'target_role'     => $n->target_role,
                 'is_active'       => $n->is_active,
                 'is_complete'     => $n->is_complete,
-                'dismissed_at'    => $n->dismissed_at,
+                'dismissed_at'    => $n->dismissed_at?->toDateTimeString(),
                 'created_at'      => $n->created_at->toDateTimeString(),
             ]);
+
+        // Mark all visible notifications as read when the student opens this page.
+        // Run as a direct UPDATE — avoids loading each model individually.
+        Notification::active()
+            ->forUser($user->id)
+            ->withinDateRange()
+            ->forDueDateTrigger($user)
+            ->unread()
+            ->update(['read_at' => now()]);
+
+        // Bust the badge cache so the bell resets immediately on next page load.
+        Cache::forget("unread_notifications_count:{$user->id}");
 
         return Inertia::render('Notifications/Index', [
             'notifications' => $notifications,
         ]);
+    }
+
+    /**
+     * Mark all active notifications as read for the authenticated user.
+     * Called by the "Mark all read" button; returns back() for Inertia.
+     */
+    public function markAllRead(Request $request)
+    {
+        $user = $request->user();
+
+        Notification::active()
+            ->forUser($user->id)
+            ->withinDateRange()
+            ->forDueDateTrigger($user)
+            ->unread()
+            ->update(['read_at' => now()]);
+
+        Cache::forget("unread_notifications_count:{$user->id}");
+
+        return back();
     }
 
     public function create()
@@ -92,6 +153,7 @@ class NotificationController extends Controller
         $this->authorize('create', Notification::class);
 
         $validated = $this->validateNotification($request);
+        $validated = $this->normalizeNotificationData($validated);
 
         if (! empty($validated['user_id'])) {
             $validated['target_role'] = 'student';
@@ -142,6 +204,7 @@ class NotificationController extends Controller
         $this->authorize('update', $notification);
 
         $validated = $this->validateNotification($request);
+        $validated = $this->normalizeNotificationData($validated);
 
         if (! empty($validated['user_id'])) {
             $validated['target_role'] = 'student';
@@ -189,12 +252,34 @@ class NotificationController extends Controller
 
         $notification->markDismissed();
 
+        // Bust unread cache so bell badge updates after dismiss
+        Cache::forget("unread_notifications_count:{$user->id}");
+
         return back()->with('success', 'Notification dismissed.');
     }
 
     // -------------------------------------------------------------------------
     // Private Helpers
     // -------------------------------------------------------------------------
+
+    private function normalizeNotificationData(array $data): array
+    {
+        // Convert empty string to null for target_term_name
+        // Empty string occurs when admin submits the form with "No filter" selected.
+        // We store null instead so scopeForUser's whereNull check works correctly.
+        if (isset($data['target_term_name']) && $data['target_term_name'] === '') {
+            $data['target_term_name'] = null;
+        }
+
+        // Convert empty array to null for term_ids
+        // Similarly, when no term_ids are selected, we store null instead of []
+        // so scopeForUser's whereNull check catches it.
+        if (isset($data['term_ids']) && (is_array($data['term_ids']) && count($data['term_ids']) === 0)) {
+            $data['term_ids'] = null;
+        }
+
+        return $data;
+    }
 
     private function validateNotification(Request $request): array
     {
