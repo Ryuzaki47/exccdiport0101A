@@ -48,13 +48,15 @@ fi
 if [ "$APP_ENV" = "production" ]; then
     echo "⚡ Production mode detected — optimizing caches..."
 
+    echo "  → Clearing stale caches..."
+    php artisan config:clear 2>&1 || true
+    php artisan route:clear 2>&1 || true
+    php artisan view:clear 2>&1 || true
+
     echo "  → Caching configuration..."
     php artisan config:cache 2>&1 || {
         echo "⚠️  WARNING: config:cache failed, continuing anyway" >&2
     }
-
-    echo "  → Clearing old route cache..."
-    php artisan route:clear 2>&1 || true
 
     echo "  → Caching routes..."
     php artisan route:cache 2>&1 || {
@@ -79,18 +81,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Seed fee_settings if the table is empty (idempotent — safe on re-deploy)
+# Seed full database if empty (idempotent — safe on re-deploy)
 # ---------------------------------------------------------------------------
-echo "💰 Checking fee_settings seed..."
-FEE_COUNT=$(php artisan tinker --no-interaction --execute="echo \App\Models\FeeSetting::count();" 2>/dev/null | tail -1)
+echo "🌱 Checking database seed status..."
+USER_COUNT=$(php artisan tinker --no-interaction --execute="echo \App\Models\User::count();" 2>/dev/null | tail -1)
 
-if [ "$FEE_COUNT" = "0" ] || [ -z "$FEE_COUNT" ]; then
-    echo "  → fee_settings is empty — running FeeSettingsSeeder..."
-    php artisan db:seed --class=FeeSettingsSeeder --force 2>&1 && echo "✓ FeeSettingsSeeder complete" || {
-        echo "⚠️  WARNING: FeeSettingsSeeder failed." >&2
+if [ "$USER_COUNT" = "0" ] || [ -z "$USER_COUNT" ]; then
+    echo "  → Database is empty — running full DatabaseSeeder (this may take 60-90 seconds)..."
+    php artisan db:seed --class=DatabaseSeeder --force 2>&1 && echo "✓ DatabaseSeeder complete" || {
+        echo "⚠️  WARNING: DatabaseSeeder failed — check logs above." >&2
     }
 else
-    echo "  → fee_settings already has ${FEE_COUNT} rows — skipping seed."
+    echo "  → Database already has ${USER_COUNT} users — skipping seed."
 fi
 
 # ---------------------------------------------------------------------------
