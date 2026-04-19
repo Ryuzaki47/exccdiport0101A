@@ -53,6 +53,9 @@ if [ "$APP_ENV" = "production" ]; then
         echo "⚠️  WARNING: config:cache failed, continuing anyway" >&2
     }
 
+    echo "  → Clearing old route cache..."
+    php artisan route:clear 2>&1 || true
+
     echo "  → Caching routes..."
     php artisan route:cache 2>&1 || {
         echo "⚠️  WARNING: route:cache failed, continuing anyway" >&2
