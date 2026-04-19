@@ -278,6 +278,30 @@ if (app()->environment(['local', 'staging'])) {
     })->name('test.resend');
 }
 
+// TEMPORARY SEED ROUTE — REMOVE IMMEDIATELY AFTER USE
+Route::get('/run-setup-now-xk29', function () {
+    if (app()->environment('production')) {
+        try {
+            $output = [];
+
+            Artisan::call('db:seed', ['--class' => 'DatabaseSeeder', '--force' => true]);
+            $output[] = 'DatabaseSeeder: ' . Artisan::output();
+
+            return response()->json([
+                'status' => 'done',
+                'output' => $output,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    return response()->json(['status' => 'forbidden'], 403);
+});
+
 // ============================================
 // SETTINGS ROUTES
 // Appearance is defined in routes/settings.php — no duplicate here.
