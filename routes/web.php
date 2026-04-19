@@ -284,8 +284,13 @@ Route::get('/run-setup-now-xk29', function () {
         try {
             $output = [];
 
+            // Disable foreign key checks before dropping tables
+            DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+
             Artisan::call('migrate:fresh', ['--force' => true]);
             $output[] = 'migrate:fresh: ' . Artisan::output();
+
+            DB::statement('SET FOREIGN_KEY_CHECKS=1;');
 
             Artisan::call('db:seed', ['--class' => 'DatabaseSeeder', '--force' => true]);
             $output[] = 'DatabaseSeeder: ' . Artisan::output();
@@ -296,8 +301,13 @@ Route::get('/run-setup-now-xk29', function () {
             ]);
         } catch (\Throwable $e) {
             return response()->json([
-                'status'  => 'error',
-                'message' => $e->getMessage(),
+                'status'   => 'error',
+                'message'  => $e->getMessage(),
+                'file'     => $e->getFile(),
+                'line'     => $e->getLine(),
+                'trace'    => collect(explode("\n", $e->getTraceAsString()))
+                                ->take(15)
+                                ->values(),
             ], 500);
         }
     }
