@@ -81,13 +81,38 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Seed full database if empty (idempotent — safe on re-deploy)
+# Seed database — forced if FORCE_RESEED=true, otherwise only if empty
 # ---------------------------------------------------------------------------
 echo "🌱 Checking database seed status..."
 USER_COUNT=$(php artisan tinker --no-interaction --execute="echo \App\Models\User::count();" 2>/dev/null | tail -1)
+FORCE_RESEED="${FORCE_RESEED:-false}"
 
-if [ "$USER_COUNT" = "0" ] || [ -z "$USER_COUNT" ]; then
-    echo "  → Database is empty — running full DatabaseSeeder (this may take 60-90 seconds)..."
+if [ "$FORCE_RESEED" = "true" ] || [ "$USER_COUNT" = "0" ] || [ -z "$USER_COUNT" ]; then
+    if [ "$FORCE_RESEED" = "true" ]; then
+        echo "  → FORCE_RESEED=true — wiping and reseeding..."
+        php artisan tinker --no-interaction --execute="
+            DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+            DB::table('workflow_approvals')->delete();
+            DB::table('workflow_instances')->delete();
+            DB::table('workflows')->delete();
+            DB::table('accounting_transactions')->delete();
+            DB::table('payments')->delete();
+            DB::table('transactions')->delete();
+            DB::table('student_payment_terms')->delete();
+            DB::table('student_assessments')->delete();
+            DB::table('student_enrollments')->delete();
+            DB::table('students')->delete();
+            DB::table('accounts')->delete();
+            DB::table('fees')->delete();
+            DB::table('notifications')->delete();
+            DB::table('users')->delete();
+            DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+            echo 'cleared';
+        " 2>&1 | tail -1
+    else
+        echo "  → Database is empty — running full DatabaseSeeder..."
+    fi
+
     php artisan db:seed --class=DatabaseSeeder --force 2>&1 && echo "✓ DatabaseSeeder complete" || {
         echo "⚠️  WARNING: DatabaseSeeder failed — check logs above." >&2
     }
