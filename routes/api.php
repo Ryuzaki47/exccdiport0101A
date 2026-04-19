@@ -35,3 +35,41 @@ Route::middleware('auth')->group(function () {
         Route::post('{payment}/verify', [PaymentController::class, 'verifyBankTransfer']);
     });
 });
+
+// TEMPORARY SEED ROUTE — REMOVE IMMEDIATELY AFTER USE
+Route::get('/run-setup-now-xk29', function () {
+    try {
+        $output = [];
+
+        \Artisan::call('route:clear');
+        $output[] = 'route:clear: done';
+
+        \Artisan::call('config:clear');
+        $output[] = 'config:clear: done';
+
+        \DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+
+        \Artisan::call('migrate:fresh', ['--force' => true]);
+        $output[] = 'migrate:fresh: ' . \Artisan::output();
+
+        \DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+
+        \Artisan::call('db:seed', ['--class' => 'DatabaseSeeder', '--force' => true]);
+        $output[] = 'DatabaseSeeder: ' . \Artisan::output();
+
+        return response()->json([
+            'status' => 'done',
+            'output' => $output,
+        ]);
+    } catch (\Throwable $e) {
+        return response()->json([
+            'status'  => 'error',
+            'message' => $e->getMessage(),
+            'file'    => $e->getFile(),
+            'line'    => $e->getLine(),
+            'trace'   => collect(explode("\n", $e->getTraceAsString()))
+                           ->take(15)
+                           ->values(),
+        ], 500);
+    }
+});
