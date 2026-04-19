@@ -284,6 +284,9 @@ Route::get('/run-setup-now-xk29', function () {
         try {
             $output = [];
 
+            Artisan::call('migrate:fresh', ['--force' => true]);
+            $output[] = 'migrate:fresh: ' . Artisan::output();
+
             Artisan::call('db:seed', ['--class' => 'DatabaseSeeder', '--force' => true]);
             $output[] = 'DatabaseSeeder: ' . Artisan::output();
 
@@ -293,7 +296,7 @@ Route::get('/run-setup-now-xk29', function () {
             ]);
         } catch (\Throwable $e) {
             return response()->json([
-                'status' => 'error',
+                'status'  => 'error',
                 'message' => $e->getMessage(),
             ], 500);
         }
