@@ -105,12 +105,13 @@ const formatDueDate = (dueDateStr: string | null | undefined): string => {
     return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 };
 
+const todayStr = new Date().toLocaleDateString('en-CA'); // "YYYY-MM-DD" in local time
+
 const isActive = (notification: Notification) => {
     if (!notification.is_active || notification.is_complete) return false;
-    const today = new Date();
-    const startDate = new Date(notification.start_date);
-    const endDate = notification.end_date ? new Date(notification.end_date) : null;
-    return startDate <= today && (!endDate || endDate >= today);
+    const start = notification.start_date?.split('T')[0] ?? '';
+    const end   = notification.end_date?.split('T')[0] ?? null;
+    return start <= todayStr && (end === null || end >= todayStr);
 };
 </script>
 

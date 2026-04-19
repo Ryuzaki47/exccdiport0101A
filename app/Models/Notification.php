@@ -20,21 +20,9 @@ class Notification extends Model
     protected $table = 'admin_notifications';
 
     protected $fillable = [
-        'title',
-        'message',
-        'type',
-        'start_date',
-        'end_date',
-        'due_date',
-        'payment_term_id',
-        'target_role',
-        'user_id',
-        'is_active',
-        'is_complete',
-        'dismissed_at',
-        'term_ids',
-        'target_term_name',
-        'trigger_days_before_due',
+        'title', 'message', 'type', 'start_date', 'end_date', 'due_date',
+        'payment_term_id', 'target_role', 'user_id', 'is_active', 'is_complete',
+        'dismissed_at', 'read_at', 'term_ids', 'target_term_name', 'trigger_days_before_due',
     ];
 
     protected $casts = [
@@ -44,12 +32,9 @@ class Notification extends Model
         'is_active'    => 'boolean',
         'is_complete'  => 'boolean',
         'dismissed_at' => 'datetime',
+        'read_at'      => 'datetime',
         'term_ids'     => 'array',
     ];
-
-    // -------------------------------------------------------------------------
-    // Relationships
-    // -------------------------------------------------------------------------
 
     public function user(): BelongsTo
     {
@@ -61,16 +46,17 @@ class Notification extends Model
         return $this->belongsTo(StudentPaymentTerm::class, 'payment_term_id');
     }
 
-    // -------------------------------------------------------------------------
-    // Scopes
-    // -------------------------------------------------------------------------
-
     public function scopeActive($query)
     {
         return $query
             ->where('is_active', true)
             ->where('is_complete', false)
             ->whereNull('dismissed_at');
+    }
+
+    public function scopeUnread($query)
+    {
+        return $query->whereNull('read_at');
     }
 
     public function scopeForUser($query, int|string $userIdentifier)
@@ -182,28 +168,22 @@ class Notification extends Model
             && (! $this->end_date   || $this->end_date->toDateString()   >= $today);
     }
 
-    public function markComplete(): void
+    public function markComplete(): void { $this->update(['is_complete' => true]); }
+    public function markDismissed(): void { $this->update(['dismissed_at' => now()]); }
+
+    public function markRead(): void
     {
-        $this->update(['is_complete' => true]);
+        if (is_null($this->read_at)) {
+            $this->update(['read_at' => now()]);
+        }
     }
 
-    public function markDismissed(): void
-    {
-        $this->update(['dismissed_at' => now()]);
-    }
-
-    /**
-     * FIX Bug #7: Was using Schema::getConnection() (DDL facade) inside a runtime scope.
-     * Use DB::getDriverName() instead — same as already used in scopeForUser().
-     */
     public static function addDaysExpression(string $columnExpression): string
     {
         $driver = DB::getDriverName();
-
         if ($driver === 'sqlite') {
             return "DATE('now', '+' || {$columnExpression} || ' days')";
         }
-
         return "DATE_ADD(CURDATE(), INTERVAL {$columnExpression} DAY)";
     }
 }

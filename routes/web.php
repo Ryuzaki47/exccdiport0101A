@@ -48,6 +48,7 @@ Route::middleware(['auth'])->group(function () {
 // ============================================
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/notifications', [NotificationController::class, 'index'])->name('notifications.index');
     Route::post('notifications/{notification}/dismiss', [NotificationController::class, 'dismiss'])->name('notifications.dismiss');
     // Bank details endpoint for payment form
     Route::get('/api/payments/bank-details', [PaymentController::class, 'getBankDetails'])->name('payment.bank-details');
@@ -69,6 +70,8 @@ Route::middleware(['auth', 'verified', 'role:student'])->prefix('student')->grou
     Route::post('/account/pay-now', [TransactionController::class, 'payNow'])->name('account.pay-now');
     Route::get('/payment/{transaction}/proof', [PaymentController::class, 'showProofForm'])->name('payment.proof.show');
     Route::post('/payment/{transaction}/proof', [PaymentController::class, 'uploadProof'])->name('payment.proof.upload');
+    Route::get('/notifications', [NotificationController::class, 'studentIndex'])->name('student.notifications');
+    Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllRead'])->name('student.notifications.mark-all-read');
 });
 
 // ============================================

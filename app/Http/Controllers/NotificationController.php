@@ -17,18 +17,53 @@ class NotificationController extends Controller
         $user = $request->user();
 
         if ($user->isAdmin()) {
+            // Admin sees ALL notifications for management — no active/date filtering
             $notifications = Notification::orderByDesc('created_at')->get();
-        } else {
-            $notifications = Notification::active()
-                ->forUser($user->id)
-                ->withinDateRange()
-                ->orderByDesc('start_date')
-                ->get();
+
+            return Inertia::render('Admin/Notifications/Index', [
+                'notifications' => $notifications,
+                'role'          => $user->role,
+            ]);
         }
 
-        return Inertia::render('Admin/Notifications/Index', [
+        // Students and accounting land on the student-facing read-only page
+        return $this->studentIndex($request);
+    }
+
+    /**
+     * Student-facing notifications page.
+     * Scoped to the authenticated user, active + within date range only.
+     * Dates are mapped to plain "YYYY-MM-DD" strings — never raw Carbon objects —
+     * so the frontend can compare them as strings without timezone drift.
+     */
+    public function studentIndex(Request $request): \Inertia\Response
+    {
+        $user = $request->user();
+
+        $notifications = Notification::active()
+            ->forUser($user->id)
+            ->withinDateRange()
+            ->forDueDateTrigger($user)
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn ($n) => [
+                'id'              => $n->id,
+                'title'           => $n->title,
+                'message'         => $n->message,
+                'type'            => $n->type,
+                'start_date'      => $n->start_date?->toDateString(),   // "YYYY-MM-DD" — no timezone
+                'end_date'        => $n->end_date?->toDateString(),
+                'due_date'        => $n->due_date?->toDateString(),
+                'payment_term_id' => $n->payment_term_id,
+                'target_role'     => $n->target_role,
+                'is_active'       => $n->is_active,
+                'is_complete'     => $n->is_complete,
+                'dismissed_at'    => $n->dismissed_at,
+                'created_at'      => $n->created_at->toDateTimeString(),
+            ]);
+
+        return Inertia::render('Notifications/Index', [
             'notifications' => $notifications,
-            'role'          => $user->role,
         ]);
     }
 
@@ -62,13 +97,6 @@ class NotificationController extends Controller
             $validated['target_role'] = 'student';
         }
 
-        // FIX Bug #2: syncDueDateToPaymentTerms() is now outside the DB::transaction().
-        // The notification is created first (in its own transaction). If the sync
-        // fails, we log it but do NOT roll back the already-committed notification.
-        // This matches the original intent described in the catch block comment,
-        // but previously the try/catch inside a transaction closure was misleading —
-        // a caught exception inside DB::transaction() does NOT trigger rollback,
-        // but it creates ambiguity about transaction state. Separating them is cleaner.
         DB::transaction(function () use ($validated) {
             Notification::create($validated);
         });
@@ -139,23 +167,15 @@ class NotificationController extends Controller
             ->with('success', 'Notification deleted successfully.');
     }
 
-    /**
-     * FIX Bug #5: Replaced manual role-string comparison with Policy check.
-     * Also fixed logic: user_id !== null && !== $user->id should be 403 immediately.
-     * Previous code had a path where user_id was set for someone else but
-     * fell through to the target_role check — that's wrong.
-     */
     public function dismiss(Request $request, Notification $notification)
     {
         $user = $request->user();
 
         if (! $user->isAdmin()) {
-            // If notification targets a specific user, it must be this user
             if ($notification->user_id !== null && $notification->user_id !== $user->id) {
                 abort(403, 'You are not authorised to dismiss this notification.');
             }
 
-            // If broadcast notification, verify role match
             if ($notification->user_id === null) {
                 $roleString = $user->role instanceof \BackedEnum
                     ? $user->role->value
@@ -196,11 +216,6 @@ class NotificationController extends Controller
         ]);
     }
 
-    /**
-     * Push notification's due_date into matching student_payment_terms rows.
-     * Only runs for type = 'payment_due' with a due_date present.
-     * Runs OUTSIDE DB::transaction — sync failure does not roll back the notification.
-     */
     private function syncDueDateToPaymentTerms(array $data): void
     {
         if (($data['type'] ?? '') !== 'payment_due') {
@@ -213,7 +228,6 @@ class NotificationController extends Controller
         }
 
         try {
-            // Priority 1: explicit term IDs
             if (! empty($data['term_ids'])) {
                 $updated = StudentPaymentTerm::whereIn('id', $data['term_ids'])
                     ->update(['due_date' => $dueDate]);
@@ -227,7 +241,6 @@ class NotificationController extends Controller
                 return;
             }
 
-            // Priority 2: single payment_term_id
             if (! empty($data['payment_term_id'])) {
                 StudentPaymentTerm::where('id', $data['payment_term_id'])
                     ->update(['due_date' => $dueDate]);
@@ -240,7 +253,6 @@ class NotificationController extends Controller
                 return;
             }
 
-            // Priority 3: target_term_name broadcast
             if (! empty($data['target_term_name'])) {
                 $query = StudentPaymentTerm::where('term_name', $data['target_term_name']);
 

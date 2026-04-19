@@ -30,6 +30,7 @@ class HandleInertiaRequests extends Middleware
         return [
             ...parent::share($request),
             'name'                 => config('app.name'),
+            'unreadNotificationsCount' => $this->resolveUnreadNotificationsCount($request),
             'quote'                => ['message' => trim($message), 'author' => trim($author)],
             'auth'                 => ['user' => $this->resolveAuthUser($request)],
             'latestAssessmentInfo' => $this->resolveLatestAssessmentInfo($request),
@@ -42,6 +43,30 @@ class HandleInertiaRequests extends Middleware
                 'info'    => $request->session()->pull('flash.info'),
             ],
         ];
+    }
+
+    private function resolveUnreadNotificationsCount(Request $request): int
+    {
+        $user = $request->user();
+
+        if (! $user) {
+            return 0;
+        }
+
+        // Admins always see 0 — they manage notifications, not receive them
+        if ($user->isAdmin()) {
+            return 0;
+        }
+
+        $cacheKey = "unread_notifications_count:{$user->id}";
+
+        return Cache::remember($cacheKey, now()->addMinutes(2), function () use ($user) {
+            return \App\Models\Notification::active()
+                ->forUser($user->id)
+                ->withinDateRange()
+                ->unread()
+                ->count();
+        });
     }
 
     /**
