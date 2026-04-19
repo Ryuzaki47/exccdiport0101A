@@ -586,7 +586,25 @@ class PaymentController extends Controller
             ],
         ]);
 
-        return response()->json(['message' => 'Bank transfer submitted successfully.']);
+        $transaction = Transaction::create([
+            'user_id'               => $user->id,
+            'student_assessment_id' => $assessment?->id,
+            'amount'                => $validated['amount'],
+            'type'                  => 'payment',
+            'kind'                  => 'payment',
+            'payment_method'        => 'bank_transfer',
+            'status'                => PaymentStatus::AWAITING_PROOF->value,
+            'description'           => 'Bank Transfer - PNB Ref: ' . $validated['reference_number'],
+            'meta'                  => [
+                'reference_number' => $validated['reference_number'],
+                'selected_term_id' => $validated['selected_term_id'] ?? null,
+            ],
+        ]);
+
+        return response()->json([
+            'message'        => 'Bank transfer submitted successfully.',
+            'transaction_id' => $transaction->id,
+        ]);
     }
 
     public function checkStatus(Request $request)

@@ -41,7 +41,7 @@ type PendingPayment = {
     created_at: string;
 };
 
-// ── Props (passed from controller via Inertia) ────────────────────────────────
+// ── Props ─────────────────────────────────────────────────────────────────────
 
 const props = withDefaults(
     defineProps<{
@@ -62,7 +62,7 @@ const props = withDefaults(
         paymentTerms: () => [],
         pendingApprovalPayments: () => [],
         preselectedTermId: null,
-        availablePaymentMethods: () => ['credit_card', 'debit_card', 'bank_transfer'],
+        availablePaymentMethods: () => ['gcash', 'bank_transfer', 'credit_card', 'debit_card'],
     },
 );
 
@@ -73,7 +73,7 @@ const breadcrumbs = [
     { title: 'Make Payment' },
 ];
 
-// ── Payment methods available to students ─────────────────────────────────────
+// ── Payment methods ───────────────────────────────────────────────────────────
 
 const allPaymentMethods = [
     { value: 'gcash',         label: 'GCash' },
@@ -98,7 +98,7 @@ const pendingByTerm = computed<Record<number, number>>(() => {
     return map;
 });
 
-// ── Available terms (unpaid, sequential) ─────────────────────────────────────
+// ── Available terms ───────────────────────────────────────────────────────────
 
 const availableTerms = computed(() => {
     const unpaid = props.paymentTerms
@@ -129,7 +129,7 @@ const effectiveBalance = computed(() => {
 
 const form = useForm({
     amount: 0 as number,
-    payment_method: computed(() => availablePaymentMethods.value[0]?.value ?? 'credit_card').value,
+    payment_method: computed(() => availablePaymentMethods.value[0]?.value ?? 'gcash').value,
     paid_at: new Date().toISOString().split('T')[0],
     selected_term_id: props.preselectedTermId ?? (null as number | null),
     description: '' as string,
@@ -149,6 +149,32 @@ const selectedTerm = computed(() =>
     availableTerms.value.find((t) => t.id === form.selected_term_id) ?? null,
 );
 
+// ── Bank transfer specific state ──────────────────────────────────────────────
+
+const isBankTransfer = computed(() => form.payment_method === 'bank_transfer');
+const bankReferenceNumber = ref('');
+const bankDetails = ref<{ account_name: string; account_number: string; bank_name: string } | null>(null);
+const bankDetailsLoading = ref(false);
+
+// Load bank details when bank transfer is selected
+watch(isBankTransfer, async (val) => {
+    if (!val || bankDetails.value) return;
+    bankDetailsLoading.value = true;
+    try {
+        const res = await fetch(route('payment.bank-details'), {
+            credentials: 'same-origin',
+        });
+        if (res.ok) {
+            const data = await res.json();
+            bankDetails.value = data.bank_details;
+        }
+    } catch {
+        // Non-fatal — bank details are informational only
+    } finally {
+        bankDetailsLoading.value = false;
+    }
+}, { immediate: false });
+
 // ── Validation ────────────────────────────────────────────────────────────────
 
 const validationError = computed<string | null>(() => {
@@ -161,13 +187,17 @@ const validationError = computed<string | null>(() => {
     }
     if (!form.amount || form.amount <= 0) return 'Please enter a valid payment amount.';
     if (form.amount > effectiveBalance.value) return 'Amount exceeds your available balance.';
+    if (isBankTransfer.value && !bankReferenceNumber.value.trim()) {
+        return 'Please enter your bank transfer reference number.';
+    }
     return null;
 });
 
-// ── Checkout state ────────────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────────────────────
 
-const isCheckingOut = ref(false);  // FIX: tracks loading state for fetch() flow
-const checkoutError = ref<string | null>(null);  // FIX: inline error instead of alert()
+const isCheckingOut = ref(false);
+const checkoutError = ref<string | null>(null);
+const submitSuccess = ref(false);
 
 const canSubmit = computed(() =>
     !validationError.value && !form.processing && !isCheckingOut.value,
@@ -175,16 +205,15 @@ const canSubmit = computed(() =>
 
 // ── Submission ────────────────────────────────────────────────────────────────
 
-const submitSuccess = ref(false);
-
 const submit = () => {
     if (!canSubmit.value) return;
     checkoutError.value = null;
 
-    if (['credit_card', 'debit_card', 'gcash'].includes(form.payment_method)) {
-        submitCheckout();
+    if (isBankTransfer.value) {
+        submitBankTransfer();
     } else {
-        submitInternalPayment();
+        // gcash, credit_card, debit_card → PayMongo checkout
+        submitCheckout();
     }
 };
 
@@ -193,17 +222,12 @@ const submitCheckout = async () => {
     checkoutError.value = null;
 
     try {
-        // FIX: usePage().props.csrf_token uses the token already shared by
-        // HandleInertiaRequests — no DOM query needed.
-        // FIX: credentials: 'same-origin' is REQUIRED so the browser sends
-        // the laravel_session cookie. Without it, the server sees no session
-        // and cannot validate the CSRF token → 419.
         const page = usePage();
         const csrfToken = (page.props.csrf_token as string) ?? '';
 
         const response = await fetch(route('payment.checkout'), {
             method: 'POST',
-            credentials: 'same-origin', // ← THE CRITICAL FIX
+            credentials: 'same-origin',
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
@@ -214,13 +238,13 @@ const submitCheckout = async () => {
                 amount: form.amount,
                 description: `${selectedTerm.value?.term_name || 'Payment'} - ${form.description || ''}`.trim(),
                 selected_term_id: form.selected_term_id,
+                payment_method: form.payment_method,
             }),
         });
 
         const data = await response.json();
 
         if (!response.ok) {
-            // FIX: surface validation errors (422) or server errors (500) inline
             throw new Error(data.error || data.message || `Server error: ${response.status}`);
         }
 
@@ -228,12 +252,10 @@ const submitCheckout = async () => {
             throw new Error('No checkout URL returned. Please try again or contact support.');
         }
 
-        // Redirect to PayMongo hosted checkout page
         window.location.href = data.checkout_url;
 
     } catch (error) {
         console.error('Checkout error:', error);
-        // FIX: inline error display instead of alert()
         checkoutError.value = error instanceof Error
             ? error.message
             : 'An unexpected error occurred. Please try again.';
@@ -242,20 +264,55 @@ const submitCheckout = async () => {
     }
 };
 
-const submitInternalPayment = () => {
-    form.post(route('account.pay-now'), {
-        preserveScroll: true,
-        onSuccess: () => {
+const submitBankTransfer = async () => {
+    isCheckingOut.value = true;
+    checkoutError.value = null;
+
+    try {
+        const page = usePage();
+        const csrfToken = (page.props.csrf_token as string) ?? '';
+
+        const response = await fetch(route('payment.bank-transfer'), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({
+                amount: form.amount,
+                reference_number: bankReferenceNumber.value.trim(),
+                selected_term_id: form.selected_term_id,
+            }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || data.message || `Server error: ${response.status}`);
+        }
+
+        // Redirect to proof upload page with the transaction id returned
+        if (data.transaction_id) {
+            router.get(route('payment.proof.show', data.transaction_id));
+        } else {
+            // Fallback: show success and redirect to account
             submitSuccess.value = true;
-            form.reset('amount', 'description');
             setTimeout(() => {
                 router.get(route('student.account'), { tab: 'history' });
             }, 2000);
-        },
-        onError: () => {
-            submitSuccess.value = false;
-        },
-    });
+        }
+
+    } catch (error) {
+        console.error('Bank transfer error:', error);
+        checkoutError.value = error instanceof Error
+            ? error.message
+            : 'An unexpected error occurred. Please try again.';
+    } finally {
+        isCheckingOut.value = false;
+    }
 };
 
 // ── Due date helpers ──────────────────────────────────────────────────────────
@@ -302,7 +359,7 @@ const dueDateUrgency = (dueDate: string | null): 'red' | 'amber' | 'green' | nul
                 <div>
                     <p class="font-semibold text-green-900">Payment submitted successfully!</p>
                     <p class="text-sm text-green-700">
-                        Your payment is awaiting accounting verification. Redirecting to payment history…
+                        Your payment is awaiting accounting verification. Redirecting…
                     </p>
                 </div>
             </div>
@@ -454,8 +511,60 @@ const dueDateUrgency = (dueDate: string | null): 'red' | 'amber' | 'green' | nul
                             </p>
                         </div>
 
-                        <!-- Payment Date -->
-                        <div>
+                        <!-- Bank Transfer: Bank Details + Reference Number -->
+                        <div v-if="isBankTransfer" class="space-y-4">
+
+                            <!-- Bank account info -->
+                            <div class="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                                <p class="text-sm font-semibold text-blue-900 mb-2">
+                                    Transfer to this account:
+                                </p>
+                                <div v-if="bankDetailsLoading" class="text-sm text-blue-600">
+                                    Loading bank details…
+                                </div>
+                                <div v-else-if="bankDetails" class="space-y-1 text-sm text-blue-800">
+                                    <div class="flex justify-between">
+                                        <span class="text-blue-600">Bank</span>
+                                        <span class="font-semibold">{{ bankDetails.bank_name }}</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-blue-600">Account Name</span>
+                                        <span class="font-semibold">{{ bankDetails.account_name }}</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-blue-600">Account Number</span>
+                                        <span class="font-mono font-semibold">{{ bankDetails.account_number }}</span>
+                                    </div>
+                                </div>
+                                <div v-else class="space-y-1 text-sm text-blue-800">
+                                    <p>Transfer your payment to the school's official bank account.</p>
+                                    <p>Contact the accounting office for bank details.</p>
+                                </div>
+                                <p class="mt-3 text-xs text-blue-600">
+                                    After transferring, enter your reference number below and upload proof of payment.
+                                </p>
+                            </div>
+
+                            <!-- Reference number input -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    Bank Transfer Reference Number <span class="text-red-500">*</span>
+                                </label>
+                                <input
+                                    v-model="bankReferenceNumber"
+                                    type="text"
+                                    placeholder="e.g. 202504191234567"
+                                    maxlength="100"
+                                    class="w-full rounded-lg border px-4 py-2 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                                <p class="mt-1 text-xs text-gray-500">
+                                    Found on your bank receipt or transfer confirmation.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Payment Date (not shown for bank transfer — reference date is used) -->
+                        <div v-if="!isBankTransfer">
                             <label class="block text-sm font-medium text-gray-700 mb-1">
                                 Payment Date <span class="text-red-500">*</span>
                             </label>
@@ -478,13 +587,13 @@ const dueDateUrgency = (dueDate: string | null): 'red' | 'amber' | 'green' | nul
                             <input
                                 v-model="form.description"
                                 type="text"
-                                placeholder="e.g. Paid via GCash — ref. 12345"
+                                :placeholder="isBankTransfer ? 'e.g. Transferred via BDO online banking' : 'e.g. Additional notes'"
                                 maxlength="255"
                                 class="w-full rounded-lg border px-4 py-2 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             />
                         </div>
 
-                        <!-- Validation error (frontend) -->
+                        <!-- Validation error -->
                         <div
                             v-if="validationError"
                             class="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
@@ -492,7 +601,7 @@ const dueDateUrgency = (dueDate: string | null): 'red' | 'amber' | 'green' | nul
                             {{ validationError }}
                         </div>
 
-                        <!-- Checkout/server error (FIX: inline instead of alert()) -->
+                        <!-- Checkout/server error -->
                         <div
                             v-if="checkoutError"
                             class="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start gap-2"
@@ -508,15 +617,24 @@ const dueDateUrgency = (dueDate: string | null): 'red' | 'amber' | 'green' | nul
                             :disabled="!canSubmit"
                             class="w-full rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white shadow transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                            <!-- FIX: isCheckingOut covers the fetch() loading state -->
                             <span v-if="form.processing || isCheckingOut">
-                                {{ isCheckingOut ? 'Redirecting to payment…' : 'Submitting…' }}
+                                <span v-if="isBankTransfer && isCheckingOut">Submitting bank transfer…</span>
+                                <span v-else-if="isCheckingOut">Redirecting to payment…</span>
+                                <span v-else>Submitting…</span>
                             </span>
-                            <span v-else>Submit Payment for Verification</span>
+                            <span v-else>
+                                <span v-if="isBankTransfer">Submit Bank Transfer & Upload Proof</span>
+                                <span v-else>Pay with {{ allPaymentMethods.find(m => m.value === form.payment_method)?.label }}</span>
+                            </span>
                         </button>
 
                         <p class="text-center text-xs text-gray-400">
-                            Payments are subject to accounting verification before being marked as paid.
+                            <span v-if="isBankTransfer">
+                                You will be asked to upload proof of payment after submitting.
+                            </span>
+                            <span v-else>
+                                Payments are subject to accounting verification before being marked as paid.
+                            </span>
                         </p>
                     </div>
                 </div>
