@@ -3,35 +3,12 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\DB;
 
 class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
         $this->command->info('🚀 Starting comprehensive database seeding...');
-        $this->command->newLine();
-
-        $this->command->info('🗑️  Clearing existing data...');
-
-        // Workflow tables (must clear before students due to FK constraints)
-        DB::table('workflow_approvals')->delete();
-        DB::table('workflow_instances')->delete();
-        DB::table('workflows')->delete();
-        DB::table('accounting_transactions')->delete();
-
-        // Core tables
-        DB::table('payments')->delete();
-        DB::table('transactions')->delete();
-        DB::table('student_payment_terms')->delete();
-        DB::table('student_assessments')->delete();
-        DB::table('student_enrollments')->delete();
-        DB::table('students')->delete();
-        DB::table('accounts')->delete();
-        DB::table('fees')->delete();
-        DB::table('notifications')->delete();
-
-        $this->command->info('✓ Existing data cleared');
         $this->command->newLine();
 
         // ── Step 1: Users ──────────────────────────────────────────────────────
@@ -56,7 +33,6 @@ class DatabaseSeeder extends Seeder
         $this->command->newLine();
 
         // ── Step 5: Assessments for 100 students ──────────────────────────────
-        // Uses formula: lec_units × ₱364 + lab_subjects × ₱1,656 + ₱4,700
         $this->command->info('📋 Step 5: Creating Student Assessments & Payment Terms...');
         $this->call(ComprehensiveAssessmentSeeder::class);
         $this->command->newLine();
@@ -82,7 +58,6 @@ class DatabaseSeeder extends Seeder
         $this->command->newLine();
 
         // ── Step 10: 4 named test students with full transaction histories ──────
-        // Includes: Maria Santos, Juan Dela Cruz, Ana Garcia, Transaction History Student
         $this->command->info('🧪 Step 10: Creating 4 Named Test Students with Transaction Histories...');
         $this->call(AdditionalStudentSeeder::class);
         $this->command->newLine();
@@ -117,7 +92,6 @@ class DatabaseSeeder extends Seeder
         $completedWorkflows    = \App\Models\WorkflowInstance::where('status', 'completed')->count();
         $pendingApprovals      = \App\Models\WorkflowApproval::where('status', 'pending')->count();
 
-        // Fee config for summary display
         $tuitionRate = (float) config('fees.tuition_per_lec_unit', 364.00);
         $labRate     = (float) config('fees.lab.per_unit', 1656.00);
         $entrepFee   = (float) config('fees.lab.entrepreneurship_fee', 600.00);
@@ -157,7 +131,6 @@ class DatabaseSeeder extends Seeder
         $this->command->info("  Lab Fee:  (lab_units × ₱{$labRate}) + ₱{$entrepFee} entrep fee");
         $this->command->info("  Misc Fee: ₱{$miscFee} (fixed per semester)");
         $this->command->info('  ─────────────────────────────────────────────────────');
-        // Example: 1st Year 1st Sem, no discount — 18 lec, 3 lab
         $exampleTuition = 18 * $tuitionRate;
         $exampleLab     = (3 * $labRate) + $entrepFee;
         $exampleTotal   = $exampleTuition + $exampleLab + $miscFee;
@@ -169,13 +142,13 @@ class DatabaseSeeder extends Seeder
         $this->command->table(
             ['Role', 'Email', 'Password'],
             [
-                ['Admin',      'admin@ccdi.edu.ph',                         'password'],
-                ['Accounting', 'accounting@ccdi.edu.ph',                    'password'],
-                ['Students',   'student1@ccdi.edu.ph – student100@ccdi.edu.ph', 'password'],
-                ['Test: Maria',    'maria.santos@test.com',                 'password'],
-                ['Test: Juan',     'juan.dela.cruz@test.com',               'password'],
-                ['Test: Ana',      'ana.garcia@test.com',                   'password'],
-                ['Test: TxHistory','transaction.history@ccdi.edu.ph',       'password'],
+                ['Admin',           'admin@ccdi.edu.ph',                              'password'],
+                ['Accounting',      'accounting@ccdi.edu.ph',                         'password'],
+                ['Students',        'student1@ccdi.edu.ph – student100@ccdi.edu.ph',  'password'],
+                ['Test: Maria',     'maria.santos@test.com',                          'password'],
+                ['Test: Juan',      'juan.dela.cruz@test.com',                        'password'],
+                ['Test: Ana',       'ana.garcia@test.com',                            'password'],
+                ['Test: TxHistory', 'transaction.history@ccdi.edu.ph',               'password'],
             ]
         );
 
@@ -187,7 +160,8 @@ class DatabaseSeeder extends Seeder
         $this->command->info('• No charge Transactions are seeded — charges come only from admin UI');
         $this->command->info('• Payment Transactions exist only for the 4 named test students');
         $this->command->info('• transaction.history@ student has 6 accordion sections (5 paid + 1 current)');
-        $this->command->info('• Run: php artisan db:seed --class=DatabaseSeeder to re-seed');
+        $this->command->info('• To reset from scratch locally: php artisan migrate:fresh --seed');
+        $this->command->info('• To reset in Docker: set FORCE_RESEED=true for one deploy, then remove it');
         $this->command->newLine();
     }
 }
