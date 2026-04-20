@@ -142,15 +142,23 @@ Route::middleware(['auth', 'verified', 'role:admin'])
     ->prefix('student-fees')
     ->name('student-fees.')
     ->group(function () {
-        Route::put('/{userId}', [StudentFeeController::class, 'update'])
-            ->whereNumber('userId')
-            ->name('update');
-
+        // Static routes FIRST (before wildcard routes)
         Route::get('/create-student', [StudentFeeController::class, 'createStudent'])
             ->name('create-student');
 
         Route::post('/store-student', [StudentFeeController::class, 'storeStudent'])
             ->name('store-student');
+
+        // Wildcard routes LAST
+        Route::put('/{userId}', [StudentFeeController::class, 'update'])
+            ->whereNumber('userId')
+            ->name('update');
+
+        Route::get('/{student}/edit-student', [StudentFeeController::class, 'editStudent'])
+            ->name('edit-student');
+
+        Route::put('/{student}/update-student', [StudentFeeController::class, 'updateStudent'])
+            ->name('update-student');
     });
 
 // ── Accounting-only: Create and store assessments ────────────────────────────

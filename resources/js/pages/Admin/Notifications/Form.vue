@@ -130,7 +130,10 @@ const filteredStudents = computed(() => {
     return props.students.filter((s) => s.name.toLowerCase().includes(query) || s.email.toLowerCase().includes(query));
 });
 
-const selectedStudent = computed(() => props.students.find((s) => s.id === form.user_id));
+const selectedStudent = computed(() => {
+    if (!form || form.user_id === null || form.user_id === undefined) return undefined;
+    return props.students.find((s) => s.id === form.user_id);
+});
 
 const breadcrumbs = [
     { title: 'Admin', href: route('admin.dashboard') },

@@ -9,18 +9,28 @@ class FeeSetting extends Model
 {
     protected $table = 'fee_settings';
 
-    protected $fillable = ['key', 'label', 'amount', 'category', 'is_active'];
+    protected $fillable = [
+        'key',
+        'label',
+        'amount',
+        'category',
+        'is_active',
+        'sort_order',
+        'is_deletable',
+    ];
 
     protected $casts = [
-        'amount' => 'decimal:2',
-        'is_active' => 'boolean',
+        'amount'       => 'decimal:2',
+        'is_active'    => 'boolean',
+        'is_deletable' => 'boolean',
+        'sort_order'   => 'integer',
     ];
 
     private const CACHE_KEY = 'fee_settings_all';
     private const CACHE_TTL = 3600;
 
     /**
-     * Boot: bust cache on any change
+     * Boot: bust cache on any change.
      */
     protected static function boot(): void
     {
@@ -40,49 +50,24 @@ class FeeSetting extends Model
     }
 
     /**
-     * Build the fee array expected by StudentFeeController.
-     * Replaces all config('fees.*') calls.
+     * Generate a unique key from a label for new misc items.
+     * e.g. "Student Council Fee" → "misc_student_council_fee"
      */
-    public static function forController(): array
+    public static function generateKey(string $label, string $category): string
     {
-        $settings = self::allActive();
+        $prefix = $category === 'other' ? 'other' : 'misc';
+        $slug   = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', $label));
+        $slug   = trim($slug, '_');
+        $base   = "{$prefix}_{$slug}";
 
-        $miscellaneous = [];
-        $other = [];
-
-        foreach ($settings as $s) {
-            if ($s->category === 'miscellaneous') {
-                $miscellaneous[] = [
-                    'name' => $s->label,
-                    'category' => 'Miscellaneous',
-                    'amount' => (float) $s->amount,
-                ];
-            } elseif ($s->category === 'other') {
-                $other[] = [
-                    'name' => $s->label,
-                    'category' => 'Other',
-                    'amount' => (float) $s->amount,
-                ];
-            }
+        // Ensure uniqueness
+        $key  = $base;
+        $i    = 2;
+        while (self::where('key', $key)->exists()) {
+            $key = "{$base}_{$i}";
+            $i++;
         }
 
-        $terms = [];
-        for ($i = 1; $i <= 5; $i++) {
-            $key = "term_{$i}_pct";
-            if (isset($settings[$key])) {
-                $terms[$i] = [
-                    'name' => $settings[$key]->label,
-                    'percentage' => (float) $settings[$key]->amount,
-                ];
-            }
-        }
-
-        return [
-            'tuition_per_unit' => (float) ($settings['tuition_per_unit']->amount ?? 364.00),
-            'lab_fee_per_subject' => (float) ($settings['lab_fee_per_subject']->amount ?? 1656.00),
-            'miscellaneous' => $miscellaneous,
-            'other' => $other,
-            'terms' => $terms ?: config('fees.terms'),
-        ];
+        return $key;
     }
 }

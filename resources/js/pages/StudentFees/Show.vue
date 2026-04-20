@@ -91,6 +91,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const { formatCurrency } = useDataFormatting();
 const page = usePage();
+const isAdmin = computed(() => (page.props.auth as any).user?.role === 'admin');
 const isAccounting = computed(() => (page.props.auth as any).user?.role === 'accounting');
 
 const selectedAssessmentId = ref<number | null>(props.assessment?.id ?? null);
@@ -853,6 +854,16 @@ const getStudentStatusColor = (status: string) => {
                             <Download class="mr-2 h-4 w-4" /> Export PDF
                         </Button>
                     </a>
+                    <Link v-if="isAdmin" :href="route('student-fees.edit-student', student.id)">
+                        <Button variant="outline" size="sm">
+                            <BookOpen class="mr-2 h-4 w-4" /> Edit Info
+                        </Button>
+                    </Link>
+                    <Link v-if="isAdmin && selectedAssessment" :href="route('student-fees.edit', student.id)">
+                        <Button variant="outline" size="sm">
+                            <BookOpen class="mr-2 h-4 w-4" /> Edit Assessment
+                        </Button>
+                    </Link>
                     <Dialog v-if="isAccounting" v-model:open="showPaymentDialog">
                         <DialogTrigger as-child>
                             <Button size="sm"
