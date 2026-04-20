@@ -51,6 +51,9 @@ const { formatCurrency } = useDataFormatting()
 const selectedSchoolYear = ref(props.filters.schoolYear)
 const selectedSemester = ref(props.filters.semester)
 
+// Client-side search within the already-loaded outstanding students list
+const searchQuery = ref('')
+
 const breadcrumbs = [
     { title: 'Dashboard', href: route('dashboard') },
     { title: 'Accounting', href: route('accounting.dashboard') },
@@ -70,6 +73,20 @@ const filteredPaymentMethods = computed(() => {
             m.method.toLowerCase() !== 'credit_card' &&
             m.method.toLowerCase() !== 'debit card' &&
             m.method.toLowerCase() !== 'debit_card',
+    )
+})
+
+// Filter the full outstanding student list by search query
+const filteredOutstandingStudents = computed(() => {
+    if (!searchQuery.value.trim()) return props.outstandingStudents
+
+    const q = searchQuery.value.toLowerCase()
+    return props.outstandingStudents.filter(
+        (s) =>
+            s.studentName.toLowerCase().includes(q) ||
+            s.accountId.toLowerCase().includes(q) ||
+            s.course.toLowerCase().includes(q) ||
+            s.latestRef.toLowerCase().includes(q),
     )
 })
 
@@ -280,7 +297,27 @@ const exportPDF = () => {
             <!-- Outstanding Balances -->
             <Card>
                 <CardHeader>
-                    <CardTitle>Top Outstanding Balances</CardTitle>
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <CardTitle>
+                            Outstanding Balances
+                            <span class="ml-2 text-sm font-normal text-muted-foreground">
+                                <!-- Show filtered count vs total -->
+                                <template v-if="searchQuery.trim()">
+                                    {{ filteredOutstandingStudents.length }} of {{ outstandingStudents.length }} students
+                                </template>
+                                <template v-else>
+                                    {{ outstandingStudents.length }} student{{ outstandingStudents.length !== 1 ? 's' : '' }}
+                                </template>
+                            </span>
+                        </CardTitle>
+                        <!-- Search box — purely client-side, no round-trip -->
+                        <input
+                            v-model="searchQuery"
+                            type="text"
+                            placeholder="Search by name, ID, course..."
+                            class="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:w-64"
+                        />
+                    </div>
                 </CardHeader>
                 <CardContent>
                     <div class="overflow-x-auto">
@@ -308,7 +345,11 @@ const exportPDF = () => {
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-border">
-                                <tr v-for="(student, index) in outstandingStudents" :key="index" class="hover:bg-muted/30">
+                                <tr
+                                    v-for="(student, index) in filteredOutstandingStudents"
+                                    :key="index"
+                                    class="hover:bg-muted/30"
+                                >
                                     <td class="px-4 py-3 text-sm font-mono text-muted-foreground">{{ student.accountId }}</td>
                                     <td class="px-4 py-3 text-sm font-mono text-indigo-600">{{ student.latestRef }}</td>
                                     <td class="px-4 py-3 text-sm font-medium">{{ student.studentName }}</td>
@@ -320,8 +361,15 @@ const exportPDF = () => {
                                 </tr>
                             </tbody>
                         </table>
+
+                        <!-- Empty state: no results at all for this period -->
                         <div v-if="outstandingStudents.length === 0" class="py-8 text-center">
                             <p class="text-sm text-muted-foreground">No outstanding balances for this period.</p>
+                        </div>
+
+                        <!-- Empty state: search returned nothing -->
+                        <div v-else-if="filteredOutstandingStudents.length === 0" class="py-8 text-center">
+                            <p class="text-sm text-muted-foreground">No students match your search.</p>
                         </div>
                     </div>
                 </CardContent>

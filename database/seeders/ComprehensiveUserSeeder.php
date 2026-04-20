@@ -13,12 +13,17 @@ use Illuminate\Support\Facades\Hash;
  *
  * Seeds exactly 100 students + 1 admin + 1 accounting staff.
  *
- * Distribution:
- *   - 40 Active    → 1st Year
- *   - 30 Active    → 2nd Year
- *   - 10 Dropped   → 2nd Year  (status=dropped, enrollment_status=inactive)
- *   - 10 Active    → 4th Year  (with remaining balance)
- *   - 10 Graduated → 4th Year  (fully paid, balance=0)
+ * Distribution (all enrolled in AY 2025-2026 simultaneously):
+ *   - 25 Active    → 1st Year  (current sem: 1Y-1S  in 2025-2026)
+ *   - 25 Active    → 2nd Year  (current sem: 2Y-1S  in 2025-2026)
+ *   - 20 Active    → 3rd Year  (current sem: 3Y-1S  in 2025-2026)
+ *   - 10 Dropped   → 3rd Year  (current sem: 3Y-1S  in 2025-2026)
+ *   - 10 Active    → 4th Year  (current sem: 4Y-1S  in 2025-2026)
+ *   - 10 Graduated → 4th Year  (all sems fully paid)
+ *
+ * All year levels are enrolled in the SAME AY 2025-2026.
+ * This makes the Financial Reports filter for 2025-2026 meaningful
+ * across all students.
  *
  * Discount overrides (resolved in ComprehensiveAssessmentSeeder):
  *   student1@ccdi.edu.ph  → Maria Santos  → discount_type = 'full'
@@ -63,7 +68,6 @@ class ComprehensiveUserSeeder extends Seeder
         'Daraga', 'Camalig', 'Bulan', 'Irosin', 'Gubat',
     ];
 
-    // Cycling list — guarantees every student has a non-null course
     private array $courses = [
         'BET Electronics Engineering Technology',
         'BET Electrical Engineering Technology',
@@ -121,30 +125,39 @@ class ComprehensiveUserSeeder extends Seeder
         );
         $accounting->account()->firstOrCreate([], ['balance' => 0]);
 
-        // ── Slots 0–1: discount students (fixed — never shuffled) ───────────────
-        // Built first so the remaining 98 maintain their exact intended distribution.
-        // student1 → Maria Santos (full discount)
-        // student2 → Ana Garcia   (nstp discount)
+        // ── Slots 0–1: discount students (always locked at front) ──────────────
         $blueprint = [
-            ['year_level' => '1st Year', 'status' => 'active', 'balance' => 0],
-            ['year_level' => '1st Year', 'status' => 'active', 'balance' => 0],
+            ['year_level' => '1st Year', 'status' => 'active',    'balance' => 0],      // student1 → full discount
+            ['year_level' => '1st Year', 'status' => 'active',    'balance' => 0],      // student2 → nstp discount
         ];
 
-        // ── Slots 2–99: exactly 98 students with the correct distribution ───────
-        // 38 more 1st Year  (+2 above = 40 total 1st Year)
-        // 30 Active  2nd Year
-        // 10 Dropped 2nd Year  (= 40 total 2nd Year)
-        // 10 Active  4th Year
-        // 10 Graduated 4th Year (= 20 total 4th Year)
+        // ── Slots 2–99: 98 students spread across ALL four year levels ─────────
+        // All are enrolled in AY 2025-2026 simultaneously.
+        // Having 3rd Year students is essential so the Financial Reports page
+        // shows meaningful data when filtered to 2025-2026 (current AY).
+        //
+        // Distribution:
+        //   23 more 1st Year active   (+2 above = 25 total 1st Year)
+        //   25 Active 2nd Year
+        //   20 Active 3rd Year
+        //   10 Dropped 3rd Year
+        //   10 Active 4th Year
+        //   10 Graduated 4th Year
+        //   ─────────────────────────
+        //   98 total in pool (+2 pinned = 100)
         $pool = [];
-        for ($i = 0; $i < 38; $i++) {
+
+        for ($i = 0; $i < 23; $i++) {
             $pool[] = ['year_level' => '1st Year', 'status' => 'active',    'balance' => rand(5000, 15000)];
         }
-        for ($i = 0; $i < 30; $i++) {
+        for ($i = 0; $i < 25; $i++) {
             $pool[] = ['year_level' => '2nd Year', 'status' => 'active',    'balance' => rand(3000, 12000)];
         }
+        for ($i = 0; $i < 20; $i++) {
+            $pool[] = ['year_level' => '3rd Year', 'status' => 'active',    'balance' => rand(3000, 10000)];
+        }
         for ($i = 0; $i < 10; $i++) {
-            $pool[] = ['year_level' => '2nd Year', 'status' => 'dropped',   'balance' => rand(5000, 20000)];
+            $pool[] = ['year_level' => '3rd Year', 'status' => 'dropped',   'balance' => rand(5000, 20000)];
         }
         for ($i = 0; $i < 10; $i++) {
             $pool[] = ['year_level' => '4th Year', 'status' => 'active',    'balance' => rand(1000, 5000)];
@@ -152,9 +165,8 @@ class ComprehensiveUserSeeder extends Seeder
         for ($i = 0; $i < 10; $i++) {
             $pool[] = ['year_level' => '4th Year', 'status' => 'graduated', 'balance' => 0];
         }
-        shuffle($pool);
 
-        // Discount students locked at front; randomized pool appended after
+        shuffle($pool);
         $blueprint = array_merge($blueprint, $pool);
 
         $userStatusMap = [
@@ -174,7 +186,6 @@ class ComprehensiveUserSeeder extends Seeder
             $studentId     = '2025-' . str_pad($studentNumber, 4, '0', STR_PAD_LEFT);
             $email         = "student{$studentNumber}@ccdi.edu.ph";
 
-            // Named discount students
             if ($studentNumber === 1) {
                 $firstName = 'Maria';
                 $lastName  = 'Santos';
@@ -191,9 +202,7 @@ class ComprehensiveUserSeeder extends Seeder
 
             $middleInitial = $this->middleInitials[array_rand($this->middleInitials)];
             $address       = $this->addresses[array_rand($this->addresses)];
-
-            // Cycle through courses so no student is ever left with null
-            $course = $this->courses[$index % count($this->courses)];
+            $course        = $this->courses[$index % count($this->courses)];
 
             $yearLevelNum = (int) substr($slot['year_level'], 0, 1);
             $birthYear    = 2025 - 18 - ($yearLevelNum - 1);
@@ -217,7 +226,6 @@ class ComprehensiveUserSeeder extends Seeder
                 'address'        => $address,
             ]);
 
-            // Negative balance = money owed
             $user->account()->create([
                 'account_number' => $this->nextAccountNumber(),
                 'balance'        => -$slot['balance'],
@@ -231,9 +239,19 @@ class ComprehensiveUserSeeder extends Seeder
         }
 
         $this->command->info('✓ 100 students seeded.');
+        $this->command->table(
+            ['Year Level', 'Count', 'Status'],
+            [
+                ['1st Year',  25, 'active (2 with discounts)'],
+                ['2nd Year',  25, 'active'],
+                ['3rd Year',  20, 'active'],
+                ['3rd Year',  10, 'dropped'],
+                ['4th Year',  10, 'active'],
+                ['4th Year',  10, 'graduated'],
+            ]
+        );
         $this->command->info('  student1 → Maria Santos  (full discount)');
         $this->command->info('  student2 → Ana Garcia    (nstp discount)');
-        $this->command->info('  student3–100 → regular   (no discount)');
         $this->command->info('  All passwords: password');
     }
 

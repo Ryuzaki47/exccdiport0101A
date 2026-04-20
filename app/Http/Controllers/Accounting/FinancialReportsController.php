@@ -13,6 +13,9 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class FinancialReportsController extends Controller
 {
+    // Statuses that represent money still owed
+    private const UNPAID_STATUSES = ['pending', 'partial', 'overdue'];
+
     public function index(Request $request)
     {
         $schoolYear = $request->get('school_year', now()->year . '-' . (now()->year + 1));
@@ -39,7 +42,7 @@ class FinancialReportsController extends Controller
             $q->where('school_year', $schoolYear)
               ->where('semester', $semester);
         })
-            ->where('status', 'pending')
+            ->whereIn('status', self::UNPAID_STATUSES)
             ->sum('balance');
 
         // ── Charts ───────────────────────────────────────────────────────────
@@ -76,17 +79,24 @@ class FinancialReportsController extends Controller
             ->get();
 
         // ── Outstanding balances table ───────────────────────────────────────
-        // FIX: was ->with(['student.user', ...]) — StudentAssessment has no
-        // student() relationship. The model points directly to User via user().
+        // BUG FIX 1: Use whereIn() to filter unpaid terms at the DB level,
+        //            not in PHP after loading all terms.
+        // BUG FIX 2: Removed ->take(20) hard cap. Now returns ALL students
+        //            with outstanding balances, sorted by balance descending.
+        //            Total count is passed so the UI can show "Showing X students".
 
         $outstandingStudents = StudentAssessment::where('school_year', $schoolYear)
             ->where('semester', $semester)
-            ->with(['user', 'paymentTerms'])
+            ->with([
+                'user',
+                // Only eager-load the unpaid terms — avoids loading fully-paid
+                // students' term history into memory needlessly
+                'paymentTerms' => fn ($q) => $q->whereIn('status', self::UNPAID_STATUSES),
+            ])
             ->get()
             ->map(function ($assessment) use ($year, $semester) {
-                $pendingBalance = $assessment->paymentTerms
-                    ->where('status', 'pending')
-                    ->sum('balance');
+                // Sum balances of unpaid terms only (already filtered above)
+                $pendingBalance = $assessment->paymentTerms->sum('balance');
 
                 // Get the latest paid PAY- reference for this student + term
                 $latestRef = $assessment->user?->transactions()
@@ -109,7 +119,6 @@ class FinancialReportsController extends Controller
             })
             ->filter(fn ($s) => $s['balance'] > 0)
             ->sortByDesc('balance')
-            ->take(20)
             ->values();
 
         $schoolYears = $this->getSchoolYears();
@@ -157,7 +166,7 @@ class FinancialReportsController extends Controller
             $q->where('school_year', $schoolYear)
               ->where('semester', $semester);
         })
-            ->where('status', 'pending')
+            ->whereIn('status', self::UNPAID_STATUSES)
             ->sum('balance');
 
         $summary = [
@@ -169,14 +178,16 @@ class FinancialReportsController extends Controller
             'totalOutstanding'      => $totalOutstanding,
         ];
 
-        // FIX: same relationship fix applied here — student.user → user
         $students = StudentAssessment::where('school_year', $schoolYear)
             ->where('semester', $semester)
-            ->with(['user', 'paymentTerms'])
+            ->with([
+                'user',
+                'paymentTerms' => fn ($q) => $q->whereIn('status', self::UNPAID_STATUSES),
+            ])
             ->get()
             ->map(function ($assessment) use ($year, $semester) {
-                $balance = $assessment->paymentTerms->sum('balance');
-                $paid    = $assessment->total_assessment - $balance;
+                $pendingBalance = $assessment->paymentTerms->sum('balance');
+                $paid           = $assessment->total_assessment - $pendingBalance;
 
                 $latestRef = $assessment->user?->transactions()
                     ->where('kind', 'payment')
@@ -193,13 +204,12 @@ class FinancialReportsController extends Controller
                     'course'      => $assessment->course ?? $assessment->user?->course ?? 'N/A',
                     'total'       => (float) $assessment->total_assessment,
                     'paid'        => (float) $paid,
-                    'balance'     => (float) $balance,
-                    'status'      => $balance > 0 ? 'Pending' : 'Paid',
+                    'balance'     => (float) $pendingBalance,
+                    'status'      => $pendingBalance > 0 ? 'Pending' : 'Paid',
                 ];
             })
             ->filter(fn ($s) => $s['balance'] > 0)
             ->sortByDesc('balance')
-            ->take(20)
             ->values();
 
         $pdf = Pdf::loadView('pdf.financial-report', [
