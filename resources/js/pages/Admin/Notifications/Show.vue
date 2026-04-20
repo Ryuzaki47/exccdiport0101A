@@ -38,8 +38,8 @@ const props = withDefaults(defineProps<Props>(), {
 
 const breadcrumbs = [
     { title: 'Admin', href: route('admin.dashboard') },
-    { title: 'Notifications', href: route('notifications.index') },
-    { title: props.notification.title, href: route('notifications.show', props.notification.id) },
+    { title: 'Notifications', href: route('admin.notifications.index') },
+    { title: props.notification.title, href: route('admin.notifications.show', props.notification.id) },
 ];
 
 const getRoleColor = (role: string) => {
@@ -76,7 +76,7 @@ const isActive = () => {
             <div class="max-w-4xl">
                 <!-- Header -->
                 <div class="mb-8 flex items-center gap-4">
-                    <Link :href="route('notifications.index')">
+                    <Link :href="route('admin.notifications.index')">
                         <Button variant="ghost" size="icon">
                             <ArrowLeft class="h-4 w-4" />
                         </Button>
@@ -194,10 +194,10 @@ const isActive = () => {
 
                 <!-- Actions -->
                 <div class="flex justify-end gap-3">
-                    <Link :href="route('notifications.index')">
+                    <Link :href="route('admin.notifications.index')">
                         <Button variant="outline">Back to Notifications</Button>
                     </Link>
-                    <Link :href="route('notifications.edit', notification.id)">
+                    <Link :href="route('admin.notifications.edit', notification.id)">
                         <Button>
                             <Edit2 class="mr-2 h-4 w-4" />
                             Edit Notification

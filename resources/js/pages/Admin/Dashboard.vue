@@ -150,7 +150,7 @@ const getColorClass = (color: string) => {
                         <Link :href="route('users.index')" class="rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-all hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700">
                             View Staffs
                         </Link>
-                        <Link :href="route('notifications.index')" class="rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-all hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700">
+                        <Link :href="route('admin.notifications.index')" class="rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-all hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700">
                             Manage Notifications
                         </Link>
                         <Link :href="route('approvals.index')" class="rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-all hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700">

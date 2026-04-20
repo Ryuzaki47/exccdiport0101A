@@ -97,9 +97,9 @@ const submit = () => {
     }
 
     if (isEditing.value && props.notification?.id) {
-        form.put(route('notifications.update', props.notification.id));
+        form.put(route('admin.notifications.update', props.notification.id));
     } else {
-        form.post(route('notifications.store'));
+        form.post(route('admin.notifications.store'));
     }
 };
 
@@ -137,10 +137,10 @@ const selectedStudent = computed(() => {
 
 const breadcrumbs = [
     { title: 'Admin', href: route('admin.dashboard') },
-    { title: 'Notifications', href: route('notifications.index') },
+    { title: 'Notifications', href: route('admin.notifications.index') },
     {
         title: isEditing.value ? `Edit: ${props.notification?.title ?? 'Notification'}` : 'Create Notification',
-        href: isEditing.value ? route('notifications.edit', props.notification?.id) : route('notifications.create'),
+        href: isEditing.value ? route('admin.notifications.edit', props.notification?.id) : route('admin.notifications.create'),
     },
 ];
 </script>
@@ -156,7 +156,7 @@ const breadcrumbs = [
                 <!-- Header -->
                 <div class="mb-8 flex items-start justify-between">
                     <div class="flex items-center gap-4">
-                        <Link :href="route('notifications.index')">
+                        <Link :href="route('admin.notifications.index')">
                             <Button variant="ghost" size="icon" class="h-10 w-10">
                                 <ArrowLeft class="h-5 w-5" />
                             </Button>
@@ -561,7 +561,7 @@ const breadcrumbs = [
 
                 <!-- Actions -->
                 <div class="mt-8 flex justify-end gap-3 border-t border-gray-300 pt-6">
-                    <Link :href="route('notifications.index')">
+                    <Link :href="route('admin.notifications.index')">
                         <Button type="button" variant="outline" class="px-6">Cancel</Button>
                     </Link>
                     <Button type="submit" :disabled="form.processing" @click="submit" class="bg-blue-600 px-8 text-white hover:bg-blue-700">

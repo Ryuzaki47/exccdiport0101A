@@ -18,6 +18,7 @@ import {
 interface FeeRates {
   tuition_per_unit: number
   lab_fee_per_subject: number
+  entrepreneurship_fee: number
   misc_total: number
   misc_items: Array<{ id: number; key: string; label: string; amount: number; category: string }>
   payment_terms: Array<{ term_name: string; term_order: number; percentage: number }>
@@ -165,13 +166,14 @@ async function loadCurriculum() {
 // ─── Form ─────────────────────────────────────────────────────────────────────
 
 const form = useForm({
-  user_id:        props.preselectedStudent?.id ?? 0,
-  semester:       '1st' as '1st' | '2nd' | 'Summer',
-  school_year:    '',
-  lec_units:      0,
-  lab_subjects:   0,   // number of subjects with lab (not lab units)
-  discount_type:  'none' as 'none' | 'full' | 'nstp',
-  is_taking_nstp: false,
+  user_id:             props.preselectedStudent?.id ?? 0,
+  semester:            '1st' as '1st' | '2nd' | 'Summer',
+  school_year:         '',
+  lec_units:           0,
+  lab_subjects:        0,   // number of subjects with lab component (not lab unit count)
+  discount_type:       'none' as 'none' | 'full' | 'nstp' | 'percentage',
+  discount_percentage: 0 as number,
+  is_taking_nstp:      false,
 })
 
 // Pre-fill school year
@@ -197,32 +199,50 @@ const baseLabFee = computed(() =>
 
 const nstpMinTuition = computed(() => props.feeRates.nstp_min_tuition)
 
+// Entrepreneurship fee: ₱600 flat when any lab subject exists
+const entrepreneurshipFee = computed(() =>
+  Number(form.lab_subjects) > 0 ? (props.feeRates.entrepreneurship_fee ?? 600) : 0
+)
+
 const discountedFees = computed(() => {
-  const dt          = form.discount_type
-  const nstp        = form.is_taking_nstp
-  const rawTuition  = baseTuition.value
-  const lab         = baseLabFee.value
-  const misc        = props.feeRates.misc_total
+  const dt         = form.discount_type
+  const nstp       = form.is_taking_nstp
+  const rawTuition = baseTuition.value
+  const lab        = baseLabFee.value
+  const entrep     = entrepreneurshipFee.value
+  const misc       = props.feeRates.misc_total
+  const nstpMin    = nstpMinTuition.value
+
+  let tuition = rawTuition
 
   if (dt === 'full') {
-    if (nstp) {
-      return { tuition: nstpMinTuition.value, lab, misc }
+    tuition = nstp ? nstpMin : 0
+  } else if (dt === 'nstp') {
+    tuition = nstpMin
+  } else if (dt === 'percentage') {
+    const pct = Number(form.discount_percentage) || 0
+    if (pct > 0) {
+      const discounted = Math.round(rawTuition * (1 - pct / 100) * 100) / 100
+      tuition = nstp ? Math.max(nstpMin, discounted) : discounted
     }
-    // Full scholarship: tuition = 0. Lab and misc STILL charged (never waived).
-    return { tuition: 0, lab, misc }
   }
 
-  if (dt === 'nstp' || nstp) {
-    return { tuition: nstpMinTuition.value, lab, misc }
-  }
-
-  return { tuition: rawTuition, lab, misc }
+  // Lab and misc are NEVER discounted regardless of policy
+  return { tuition, lab, entrep, misc }
 })
 
-const tuitionFee       = computed(() => discountedFees.value.tuition)
-const labFee           = computed(() => discountedFees.value.lab)
-const miscFee          = computed(() => discountedFees.value.misc)
-const totalAssessment  = computed(() => tuitionFee.value + labFee.value + miscFee.value)
+const tuitionFee      = computed(() => discountedFees.value.tuition)
+const labFee          = computed(() => discountedFees.value.lab)
+const miscFee         = computed(() => discountedFees.value.misc)
+const totalAssessment = computed(() =>
+  tuitionFee.value + labFee.value + entrepreneurshipFee.value + miscFee.value
+)
+
+// How much tuition is saved vs full price
+const discountSaving = computed(() => {
+  const raw = baseTuition.value
+  return Math.max(0, Math.round((raw - tuitionFee.value) * 100) / 100)
+})
 
 const paymentTermBreakdown = computed(() =>
   props.feeRates.payment_terms.map((t) => ({
@@ -509,7 +529,7 @@ function submit() {
             </div>
           </Card>
 
-          <!-- Discount Policy -->
+          <!-- Discount / Scholarship Policy -->
           <Card>
             <CardHeader>
               <CardTitle class="text-base flex items-center gap-2">
@@ -518,56 +538,124 @@ function submit() {
               </CardTitle>
             </CardHeader>
             <CardContent class="space-y-4">
+
+              <!-- Discount Type Dropdown -->
               <div class="space-y-1.5">
-                <Label for="discount_type">Discount Type</Label>
+                <Label for="discount_type">Scholarship / Discount Type</Label>
                 <select
                   id="discount_type"
                   v-model="form.discount_type"
                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs focus:outline-none focus:ring-1 focus:ring-ring"
                 >
-                  <option value="none">None (Standard billing)</option>
-                  <option value="full">Full Scholarship (100% tuition waived)</option>
-                  <option value="nstp">NSTP Waiver (tuition fixed at {{ formatCurrency(feeRates.nstp_min_tuition) }})</option>
+                  <option value="none">None — Standard billing</option>
+                  <option value="full">Full Scholarship — 100% tuition waived</option>
+                  <option value="nstp">NSTP Waiver — tuition fixed at {{ formatCurrency(feeRates.nstp_min_tuition) }}</option>
+                  <option value="percentage">Partial Scholarship — Enter percentage below</option>
                 </select>
                 <p v-if="form.errors.discount_type" class="text-sm text-destructive">
                   {{ form.errors.discount_type }}
                 </p>
               </div>
 
-              <!-- NSTP checkbox (only show when discount is active) -->
-              <div v-if="form.discount_type !== 'none'"
-                class="flex items-center gap-2 p-3 rounded-md bg-amber-50 border border-amber-200">
+              <!-- Percentage input — shown only for 'percentage' type -->
+              <div v-if="form.discount_type === 'percentage'" class="space-y-2">
+                <Label for="discount_percentage">Discount Percentage (%)</Label>
+                <div class="flex gap-2">
+                  <!-- Quick-select presets -->
+                  <div class="flex gap-1 flex-wrap">
+                    <button
+                      v-for="preset in [10, 20, 25, 50, 75, 100]"
+                      :key="preset"
+                      type="button"
+                      @click="form.discount_percentage = preset"
+                      :class="[
+                        'px-2.5 py-1 rounded text-xs font-medium border transition-colors',
+                        form.discount_percentage === preset
+                          ? 'bg-amber-500 text-white border-amber-500'
+                          : 'bg-white border-input text-muted-foreground hover:bg-muted'
+                      ]"
+                    >
+                      {{ preset }}%
+                    </button>
+                  </div>
+                </div>
+                <!-- Freeform input -->
+                <div class="flex items-center gap-2">
+                  <Input
+                    id="discount_percentage"
+                    type="number"
+                    v-model.number="form.discount_percentage"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    placeholder="0.00"
+                    class="w-32 text-center"
+                  />
+                  <span class="text-sm text-muted-foreground">% off tuition only</span>
+                </div>
+                <p v-if="form.errors.discount_percentage" class="text-sm text-destructive">
+                  {{ form.errors.discount_percentage }}
+                </p>
+                <p class="text-xs text-muted-foreground">
+                  Lab and miscellaneous fees are never discounted per CCDI policy.
+                </p>
+              </div>
+
+              <!-- NSTP checkbox — show when discount is active (not 'none') -->
+              <div
+                v-if="form.discount_type !== 'none'"
+                class="flex items-start gap-2 p-3 rounded-md bg-amber-50 border border-amber-200"
+              >
                 <input
                   id="is_taking_nstp"
                   type="checkbox"
                   v-model="form.is_taking_nstp"
-                  class="rounded border border-input"
+                  class="mt-0.5 rounded border border-input"
                 />
                 <Label for="is_taking_nstp" class="cursor-pointer flex-1 text-amber-900">
                   Student is enrolled in NSTP this semester
                   <p class="text-xs text-amber-700 mt-0.5 font-normal">
-                    If Full Scholarship + NSTP: tuition floors at {{ formatCurrency(feeRates.nstp_min_tuition) }}
-                    (1.5 units × rate). Lab and misc still charged.
+                    When active with Full Scholarship: tuition floors at
+                    {{ formatCurrency(feeRates.nstp_min_tuition) }} (1.5 units × rate).
+                    Lab and misc are always charged.
                   </p>
                 </Label>
               </div>
 
-              <!-- Discount preview -->
-              <div v-if="form.discount_type !== 'none'" class="rounded-md bg-green-50 border border-green-200 p-3 space-y-1 text-sm text-green-900">
-                <p class="font-semibold text-xs uppercase tracking-wide text-green-700 mb-1">Effective Fees After Discount</p>
-                <div class="flex justify-between">
-                  <span>Tuition:</span>
+              <!-- Discount preview panel -->
+              <div
+                v-if="form.discount_type !== 'none'"
+                class="rounded-md bg-green-50 border border-green-200 p-3 space-y-1.5 text-sm"
+              >
+                <p class="font-semibold text-xs uppercase tracking-wide text-green-700 mb-1">
+                  Effective Fees After Discount
+                </p>
+                <div class="flex justify-between text-green-900">
+                  <span>Tuition</span>
                   <span class="font-semibold">{{ formatCurrency(tuitionFee) }}</span>
                 </div>
-                <div class="flex justify-between">
-                  <span>Lab:</span>
+                <div v-if="discountSaving > 0" class="flex justify-between text-green-700 text-xs">
+                  <span>You save</span>
+                  <span class="font-semibold text-green-600">− {{ formatCurrency(discountSaving) }}</span>
+                </div>
+                <div class="flex justify-between text-green-900">
+                  <span>Lab Fee</span>
                   <span class="font-semibold">{{ formatCurrency(labFee) }}</span>
                 </div>
-                <div class="flex justify-between">
-                  <span>Misc:</span>
+                <div v-if="entrepreneurshipFee > 0" class="flex justify-between text-green-900">
+                  <span>Entrepreneurship Fee</span>
+                  <span class="font-semibold">{{ formatCurrency(entrepreneurshipFee) }}</span>
+                </div>
+                <div class="flex justify-between text-green-900">
+                  <span>Miscellaneous</span>
                   <span class="font-semibold">{{ formatCurrency(miscFee) }}</span>
                 </div>
+                <div class="border-t border-green-300 pt-1.5 flex justify-between font-bold text-green-900">
+                  <span>Total Assessment</span>
+                  <span>{{ formatCurrency(totalAssessment) }}</span>
+                </div>
               </div>
+
             </CardContent>
           </Card>
 

@@ -177,18 +177,13 @@ Route::middleware(['auth', 'verified', 'role:accounting,admin'])->prefix('accoun
     Route::get('/financial-reports', [FinancialReportsController::class, 'index'])->name('accounting.financial-reports');
     Route::get('/financial-reports/export', [FinancialReportsController::class, 'export'])->name('accounting.financial-reports.export');
 
-    // Fee Settings — FIXED: store and destroy were missing
+    // Fee Settings — store and destroy included
     Route::get('/fee-settings', [FeeSettingsController::class, 'index'])->name('accounting.fee-settings.index');
     Route::patch('/fee-settings/{feeSetting}', [FeeSettingsController::class, 'update'])->name('accounting.fee-settings.update');
     // NOTE: bulk must be registered BEFORE the {feeSetting} wildcard to avoid collision
     Route::post('/fee-settings/bulk', [FeeSettingsController::class, 'bulkUpdate'])->name('accounting.fee-settings.bulk');
     Route::post('/fee-settings', [FeeSettingsController::class, 'store'])->name('accounting.fee-settings.store');
     Route::delete('/fee-settings/{feeSetting}', [FeeSettingsController::class, 'destroy'])->name('accounting.fee-settings.destroy');
-
-    // Bulk Auto-Assessment Generation — NEW FEATURE
-    Route::get('/auto-assess', [\App\Http\Controllers\Accounting\AutoAssessmentController::class, 'index'])->name('accounting.auto-assess.index');
-    Route::post('/auto-assess/preview', [\App\Http\Controllers\Accounting\AutoAssessmentController::class, 'preview'])->name('accounting.auto-assess.preview');
-    Route::post('/auto-assess/generate', [\App\Http\Controllers\Accounting\AutoAssessmentController::class, 'generate'])->name('accounting.auto-assess.generate');
 });
 
 // ============================================

@@ -10,7 +10,7 @@ import { type NavItem } from '@/types';
 import { Link, usePage } from '@inertiajs/vue3';
 import {
     Banknote, BarChart3, Bell, BookOpen, CheckCircle2, ClipboardList,
-    CreditCard, GraduationCap, History, LayoutGrid, Receipt, Settings, Sparkles, Users,
+    CreditCard, GraduationCap, History, LayoutGrid, Receipt, Settings, Users,
 } from 'lucide-vue-next';
 import { computed } from 'vue';
 import AppLogo from './AppLogo.vue';
@@ -41,7 +41,6 @@ const mainNavItems = computed<NavItem[]>(() => {
         // ── Accounting ──
         { title: 'Accounting Dashboard', href: safeRoute('accounting.dashboard'), icon: Banknote,   roles: ['accounting'] },
         { title: 'Student Fee Management', href: safeRoute('student-fees.index'),  icon: Receipt,      roles: ['accounting'] },
-        { title: 'Auto-Assessment',        href: safeRoute('accounting.auto-assess.index'), icon: Sparkles,   roles: ['accounting'] },
         { title: 'Financial Reports',      href: safeRoute('accounting.financial-reports'), icon: BarChart3, roles: ['accounting'] },
         { title: 'Fee Settings',           href: safeRoute('accounting.fee-settings.index'), icon: Settings, roles: ['accounting'] },
         { title: 'Payment Approvals',      href: safeRoute('approvals.index'),     icon: CheckCircle2, roles: ['accounting', 'admin'] },

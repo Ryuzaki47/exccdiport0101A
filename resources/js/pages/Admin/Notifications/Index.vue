@@ -38,7 +38,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const breadcrumbs = [
     { title: 'Admin', href: route('admin.dashboard') },
-    { title: 'Notifications', href: route('notifications.index') },
+    { title: 'Notifications', href: route('admin.notifications.index') },
 ];
 
 const searchQuery = ref('');
@@ -53,7 +53,7 @@ const filteredNotifications = computed(() => {
 
 const deleteNotification = (id: number) => {
     if (confirm('Are you sure you want to delete this notification?')) {
-        router.delete(route('notifications.destroy', id));
+        router.delete(route('admin.notifications.destroy', id));
     }
 };
 
@@ -141,7 +141,7 @@ const isActive = (notification: Notification) => {
                     <h1 class="mb-2 text-3xl font-bold text-gray-900">Payment Notifications</h1>
                     <p class="text-gray-600">Create and manage notifications for students</p>
                 </div>
-                <Link :href="route('notifications.create')">
+                <Link :href="route('admin.notifications.create')">
                     <Button>
                         <Plus class="mr-2 h-4 w-4" />
                         Create Notification
@@ -166,7 +166,7 @@ const isActive = (notification: Notification) => {
                 <p class="mb-4 text-gray-600">
                     {{ searchQuery ? 'Try adjusting your search' : 'Create your first notification to get started' }}
                 </p>
-                <Link v-if="!searchQuery" :href="route('notifications.create')">
+                <Link v-if="!searchQuery" :href="route('admin.notifications.create')">
                     <Button variant="outline">
                         <Plus class="mr-2 h-4 w-4" />
                         Create First Notification
@@ -283,7 +283,7 @@ const isActive = (notification: Notification) => {
 
                         <!-- Actions -->
                         <div class="mt-4 flex justify-end gap-2 border-t pt-4">
-                            <Link :href="route('notifications.edit', notification.id)" as="button">
+                            <Link :href="route('admin.notifications.edit', notification.id)" as="button">
                                 <Button variant="outline" size="sm">
                                     <Edit2 class="mr-2 h-4 w-4" />
                                     Edit
