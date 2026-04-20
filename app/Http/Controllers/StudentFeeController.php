@@ -81,6 +81,7 @@ class StudentFeeController extends Controller
 
         $students = $query->paginate(20)->through(fn ($u) => [
             'id'                => $u->id,
+            'student_db_id'     => $u->student?->id,
             'account_id'        => $u->account_id,
             'name'              => $this->buildStudentName($u),
             'course'            => $u->course,

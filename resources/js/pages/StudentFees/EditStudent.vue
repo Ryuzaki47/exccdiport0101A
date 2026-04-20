@@ -37,20 +37,6 @@ const breadcrumbs = [
 ]
 
 const form = useForm({
-  student_id: '',
-  first_name: '',
-  last_name: '',
-  middle_initial: '',
-  email: '',
-  birthday: '',
-  year_level: '',
-  course: '',
-  address: '',
-  phone: '',
-})
-
-// Initialize form with student data
-form.defaults({
   student_id: props.student.student_id,
   first_name: props.student.user.first_name,
   last_name: props.student.user.last_name,
