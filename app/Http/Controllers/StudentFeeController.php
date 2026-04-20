@@ -452,6 +452,19 @@ class StudentFeeController extends Controller
                 ->with('flash.error', 'No active assessment found for this student. Create one first.');
         }
 
+        // Calculate nstp_units from enrolled subjects
+        $nstpUnits = 0;
+        if ($assessment->is_taking_nstp) {
+            $nstpUnits = \DB::table('student_enrollments')
+                ->join('subjects', 'student_enrollments.subject_id', '=', 'subjects.id')
+                ->where('student_enrollments.user_id', $userId)
+                ->where('student_enrollments.school_year', $assessment->school_year)
+                ->where('student_enrollments.semester', $assessment->semester)
+                ->where('student_enrollments.status', 'enrolled')
+                ->where(\DB::raw("UPPER(subjects.code)"), 'like', 'NSTP%')
+                ->sum('subjects.lec_units');
+        }
+
         $feeRates = AssessmentService::feeRatesForForm();
 
         return Inertia::render('StudentFees/Edit', [
@@ -468,6 +481,7 @@ class StudentFeeController extends Controller
                 'semester'       => $assessment->semester,
                 'school_year'    => $assessment->school_year,
                 'lec_units'      => $assessment->lec_units,
+                'nstp_units'     => (int) $nstpUnits,
                 'lab_units'      => $assessment->lab_units,
                 'discount_type'  => $assessment->discount_type ?? 'none',
                 'is_taking_nstp' => $assessment->is_taking_nstp ?? false,

@@ -32,6 +32,7 @@ const props = defineProps<{
     semester: string
     school_year: string
     lec_units: number
+    nstp_units: number
     lab_units: number
     discount_type?: string
     is_taking_nstp?: boolean
@@ -65,10 +66,21 @@ const form = useForm({
 
 // ─── Live Fee Computation ─────────────────────────────────────────────────────
 
+// Separate discountable and non-discountable (NSTP) units
+const discountableUnits = computed(() => Number(form.lec_units))
+const nstpUnits = computed(() => Number(props.assessment.nstp_units || 0))
+const totalLecUnits = computed(() => discountableUnits.value + nstpUnits.value)
+
 // Base fees (before discount)
-const baseTuition = computed(() =>
-  Number(form.lec_units) * props.feeRates.tuition_per_lec_unit
+const baseTuitionDiscountable = computed(() =>
+  discountableUnits.value * props.feeRates.tuition_per_lec_unit
 )
+
+const baseTuitionNstp = computed(() =>
+  nstpUnits.value * props.feeRates.tuition_per_lec_unit
+)
+
+const baseTuition = computed(() => baseTuitionDiscountable.value + baseTuitionNstp.value)
 
 const baseLabFee = computed(() =>
   Number(form.lab_units) * props.feeRates.lab_fee_per_unit
@@ -77,27 +89,24 @@ const baseLabFee = computed(() =>
 const baseMiscFee = computed(() => props.feeRates.misc_fee_fixed)
 
 // Apply discount policy
+// NSTP units are EXCLUDED from discount — always full price
+// Only non-NSTP (discountable) lecture units get discounted
 const discountedFees = computed(() => {
-  let tuition = baseTuition.value
-  let lab = baseLabFee.value
-  let misc = baseMiscFee.value
-
+  let discountableAmount = 0
+  
   if (form.discount_type === 'full') {
-    tuition = 0
-    lab = 0
-    misc = 0
-    if (form.is_taking_nstp) {
-      tuition = 546
-      lab = baseLabFee.value
-      misc = baseMiscFee.value
-    }
-  } else if (form.discount_type === 'nstp' || form.is_taking_nstp) {
-    tuition = 546
-    lab = baseLabFee.value
-    misc = baseMiscFee.value
+    // Full discount: discountable units pay ₱0, NSTP pays full price
+    discountableAmount = 0
   }
+  // else: no discount, all units pay full price (already in baseTuition)
 
-  return { tuition, lab, misc }
+  const finalTuition = baseTuitionDiscountable.value - discountableAmount + baseTuitionNstp.value
+  
+  return { 
+    tuition: finalTuition, 
+    lab: baseLabFee.value, 
+    misc: baseMiscFee.value 
+  }
 })
 
 const tuitionFee = computed(() => discountedFees.value.tuition)
@@ -109,42 +118,37 @@ const entrepreneurshipFee = computed(() =>
 )
 
 const total = computed(() => tuitionFee.value + labFee.value + entrepreneurshipFee.value + miscFee.value)
-const totalUnits = computed(() => Number(form.lec_units) + Number(form.lab_units))
 
-// Computed: live preview of discount result (mirrors DiscountService logic)
-const NSTP_TUITION = 546
-
+// Computed: live preview of discount result (NSTP units excluded from discount)
 const discountedBreakdown = computed(() => {
-  const raw = {
-    tuition: baseTuition.value,
-    lab:     baseLabFee.value,
-    misc:    baseMiscFee.value,
-  }
+  const rawDiscountable = baseTuitionDiscountable.value
+  const rawNstp = baseTuitionNstp.value
+  const rawLab = baseLabFee.value
+  const rawMisc = baseMiscFee.value
+
+  let discountableAfter = rawDiscountable
 
   if (form.discount_type === 'full') {
-    if (form.is_taking_nstp) {
-      return {
-        tuition: NSTP_TUITION,
-        lab: raw.lab,
-        misc: raw.misc,
-        total: NSTP_TUITION + raw.lab + raw.misc,
-        applied: 'Full discount + NSTP',
-      }
-    }
-    return { tuition: 0, lab: 0, misc: 0, total: 0, applied: 'Full (100%) discount' }
-  }
-
-  if (form.discount_type === 'nstp' || form.is_taking_nstp) {
+    discountableAfter = 0
     return {
-      tuition: NSTP_TUITION,
-      lab: raw.lab,
-      misc: raw.misc,
-      total: NSTP_TUITION + raw.lab + raw.misc,
-      applied: 'NSTP tuition override',
+      discountable: 0,
+      nstp: rawNstp,
+      lab: rawLab,
+      misc: rawMisc,
+      total: rawNstp + rawLab + rawMisc,
+      applied: `Full (100%) discount on ${discountableUnits.value} units; NSTP (${nstpUnits.value} units) at full price`,
     }
   }
 
-  return { ...raw, total: raw.tuition + raw.lab + raw.misc, applied: 'No discount' }
+  // No discount
+  return { 
+    discountable: rawDiscountable, 
+    nstp: rawNstp,
+    lab: rawLab, 
+    misc: rawMisc,
+    total: rawDiscountable + rawNstp + rawLab + rawMisc, 
+    applied: 'No discount' 
+  }
 })
 
 const paymentTermBreakdown = computed(() =>

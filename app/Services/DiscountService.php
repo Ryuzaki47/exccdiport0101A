@@ -7,8 +7,9 @@ namespace App\Services;
  *
  * Implements CCDI fee discount policy (AY 2025-2026).
  *
- * POLICY — Option A (tuition-only discount):
- *   Discounts affect ONLY the tuition fee.
+ * POLICY:
+ *   NSTP units are EXCLUDED from discount (non-discountable).
+ *   Discounts affect ONLY billable (non-NSTP) lecture units.
  *   Lab fee and miscellaneous fee are ALWAYS charged in full,
  *   regardless of discount type — they cover actual consumables,
  *   equipment use, insurance, library, and institutional funds
@@ -16,23 +17,27 @@ namespace App\Services;
  *
  * ── DISCOUNT MATRIX ──────────────────────────────────────────────────────────
  *
- *   discount_type = 'none'
- *     tuition → lec_units × ₱364  (full rate)
- *     lab     → as-is
- *     misc    → as-is
+ *   With NSTP units + discount_type = 'full'
+ *     billable_tuition → ₱0.00  (100% discounted)
+ *     nstp_tuition     → discountableUnits × rate  (full price, never discounted)
+ *     lab              → as-is
+ *     misc             → as-is
+ *     total_tuition    = nstp_tuition + lab + misc
  *
- *   discount_type = 'full'
+ *   With NSTP units + discount_type = 'none'
+ *     billable_tuition → discountableUnits × ₱364  (full rate)
+ *     nstp_tuition     → nstpUnits × ₱364
+ *     lab              → as-is
+ *     misc             → as-is
+ *     total_tuition    = billable_tuition + nstp_tuition
+ *
+ *   Without NSTP + discount_type = 'full'
  *     tuition → ₱0.00  (100% waived)
- *     lab     → as-is  (NOT waived — student still pays lab + entrep + misc)
- *     misc    → as-is
- *
- *   discount_type = 'nstp'  (or is_taking_nstp = true)
- *     tuition → ₱546.00 fixed  (CHED minimum — 1.5 units × ₱364)
  *     lab     → as-is
  *     misc    → as-is
  *
- *   discount_type = 'full' + is_taking_nstp = true
- *     tuition → ₱546.00  (NSTP minimum restored even under full discount)
+ *   Without NSTP + discount_type = 'none'
+ *     tuition → lec_units × ₱364  (full rate)
  *     lab     → as-is
  *     misc    → as-is
  *
@@ -49,48 +54,50 @@ class DiscountService
     /**
      * Apply the CCDI discount policy to a raw fee breakdown.
      *
-     * Only tuition is affected. Lab and misc are always passed through as-is.
+     * NSTP units (non-discountable) are excluded from discount calculation.
+     * Only billable (non-NSTP) lecture units can be discounted.
+     * Lab and misc are never discounted.
      *
-     * @param  float  $tuitionFee   Raw tuition  (lec_units × ₱364)
-     * @param  float  $labFee       Raw lab fees (lab_units × ₱1,656 + ₱600 entrep)
-     * @param  float  $miscFee      Fixed misc   (₱4,700)
-     * @param  string $discountType 'none' | 'full' | 'nstp'
-     * @param  bool   $isTakingNstp Whether the student is enrolled in NSTP
+     * @param  float  $tuitionFee       Raw tuition for billable lec_units (lec_units × ₱364)
+     * @param  float  $nstpUnits        Total NSTP lecture units (always full price)
+     * @param  float  $labFee           Raw lab fees (lab_units × ₱1,656 + ₱600 entrep)
+     * @param  float  $miscFee          Fixed misc   (₱4,700)
+     * @param  string $discountType     'none' | 'full'
+     * @param  float  $rate             Per-unit tuition rate (₱364)
      * @return array{tuition: float, lab: float, misc: float, total: float, applied: string}
      */
     public function apply(
         float  $tuitionFee,
+        float  $nstpUnits,
         float  $labFee,
         float  $miscFee,
         string $discountType,
-        bool   $isTakingNstp = false
+        float  $rate = 364.00
     ): array {
         // Lab and misc are NEVER discounted — always passed through unchanged.
         $lab  = $labFee;
         $misc = $miscFee;
 
+        // Calculate NSTP tuition at full price
+        $nstpTuition = round($nstpUnits * $rate, 2);
+
+        // Apply discount only to billable (non-NSTP) units
         if ($discountType === 'full') {
-            // Full scholarship: tuition is fully waived.
-            // If student is also taking NSTP, the CHED minimum of ₱546 is restored.
-            $tuition = $isTakingNstp ? self::NSTP_TUITION_FEE : 0.00;
-            $applied = $isTakingNstp ? 'full_with_nstp' : 'full';
-
-        } elseif ($discountType === 'nstp' || $isTakingNstp) {
-            // NSTP waiver only: tuition is fixed at ₱546 regardless of unit load.
-            $tuition = self::NSTP_TUITION_FEE;
-            $applied = 'nstp';
-
+            $billableTuition = 0.00;
+            $applied = $nstpUnits > 0 ? 'full_discount_nstp_full_price' : 'full';
         } else {
-            // No discount: everything is full rate.
-            $tuition = $tuitionFee;
+            // No discount: billable units at full price
+            $billableTuition = $tuitionFee;
             $applied = 'none';
         }
 
+        $finalTuition = $billableTuition + $nstpTuition;
+
         return [
-            'tuition' => round($tuition, 2),
+            'tuition' => round($finalTuition, 2),
             'lab'     => round($lab, 2),
             'misc'    => round($misc, 2),
-            'total'   => round($tuition + $lab + $misc, 2),
+            'total'   => round($finalTuition + $lab + $misc, 2),
             'applied' => $applied,
         ];
     }
