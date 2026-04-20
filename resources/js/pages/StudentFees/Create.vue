@@ -208,7 +208,8 @@ const discountedFees = computed(() => {
     if (nstp) {
       return { tuition: nstpMinTuition.value, lab, misc }
     }
-    return { tuition: 0, lab: 0, misc: 0 }
+    // Full scholarship: tuition = 0. Lab and misc STILL charged (never waived).
+    return { tuition: 0, lab, misc }
   }
 
   if (dt === 'nstp' || nstp) {

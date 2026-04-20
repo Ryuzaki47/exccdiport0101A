@@ -13,6 +13,7 @@ use App\Models\User;
  *   1. Computing fee totals from fee_settings table (NOT config)
  *   2. Auto-populating curriculum units for regular students
  *   3. Enforcing NSTP/PATHFIT billing exclusion rules
+ *   4. Applying discount policy
  *
  * BILLING RULES (AY 2025-2026):
  *   Tuition   = billable_lec_units × tuition_per_unit
@@ -21,16 +22,20 @@ use App\Models\User;
  *   ─────────────────────────────────────────────────────────────────────
  *   Total     = tuition + lab_fee + misc_fee
  *
+ * DISCOUNT POLICY (canonical — this file is the only source):
+ *   'none'     → Full billing, no changes
+ *   'nstp'     → Tuition floors at NSTP minimum (1.5 units × rate)
+ *                Lab and misc charged in full
+ *   'full'     → Tuition = 0 (100% waived)
+ *                If student is also taking NSTP, tuition floors at NSTP minimum instead
+ *                Lab and misc are ALWAYS charged — they cover consumables and institutional funds
+ *   percentage → Additional partial discount: tuition = max(nstp_min, raw × (1 - pct/100))
+ *                Lab and misc always charged in full
+ *
  * NSTP / PATHFIT RULES:
  *   - NSTP subjects (code like 'NSTP%') are NEVER billed — excluded from lec_units
- *   - PATHFIT subjects (code like 'PATHFIT%' or COMP101-type) with units in parentheses
- *     are non-tuition per CHED — excluded from lec_units
+ *   - PATHFIT / PE subjects are non-tuition per CHED — excluded from lec_units
  *   - These subjects still appear in the curriculum list but contribute 0 to billing
- *
- * DISCOUNT RULES:
- *   - Discounts apply to TUITION ONLY
- *   - Lab fee and misc fee are NEVER discounted
- *   - NSTP subjects are always excluded before discount is applied
  */
 class AssessmentService
 {
@@ -44,7 +49,6 @@ class AssessmentService
 
     /**
      * Subject codes / name patterns that are non-tuition-bearing.
-     * These are excluded from lec_units count for billing purposes.
      */
     const NON_TUITION_CODES = ['NSTP', 'PATHFIT', 'PE ', 'PE1', 'PE2', 'PE3', 'PE4'];
 
@@ -72,7 +76,7 @@ class AssessmentService
         // Collect all misc items (miscellaneous + other categories)
         $miscItems = $settings
             ->whereIn('category', ['miscellaneous', 'other'])
-            ->sortBy('id')
+            ->sortBy('sort_order')
             ->values()
             ->map(fn ($s) => [
                 'id'       => $s->id,
@@ -117,12 +121,6 @@ class AssessmentService
     /**
      * Get curriculum subjects for a regular student and compute their billable units.
      *
-     * For regular students: fetch subjects matching their course + year_level + semester.
-     * Exclude NSTP and PATHFIT (non-tuition subjects).
-     *
-     * @param  string $course      e.g. "BS Information Technology"
-     * @param  string $yearLevel   e.g. "1st Year"
-     * @param  string $semester    e.g. "1st" or "2nd"
      * @return array{
      *   subjects: array,
      *   billable_lec_units: int,
@@ -134,7 +132,6 @@ class AssessmentService
      */
     public static function getCurriculumUnits(string $course, string $yearLevel, string $semester): array
     {
-        // Normalize semester value (the DB stores "1st Sem", "2nd Sem" etc.)
         $semesterDb = self::normalizeSemester($semester);
 
         $subjects = Subject::where('course', $course)
@@ -150,8 +147,8 @@ class AssessmentService
         $subjectList      = [];
 
         foreach ($subjects as $subj) {
-            $isNstp    = self::isNstpSubject($subj->code, $subj->name);
-            $isPathfit = self::isPathfitSubject($subj->code, $subj->name);
+            $isNstp     = self::isNstpSubject($subj->code, $subj->name);
+            $isPathfit  = self::isPathfitSubject($subj->code, $subj->name);
             $isBillable = ! $isNstp && ! $isPathfit;
 
             if ($isNstp) {
@@ -193,41 +190,49 @@ class AssessmentService
     /**
      * Compute the full assessment fee breakdown.
      *
-     * @param  int    $lecUnits      Billable lecture units (NSTP/PATHFIT already excluded)
-     * @param  int    $labSubjects   Number of subjects with lab_units > 0
-     * @param  string $discountType  'none' | 'full' | 'nstp'
-     * @param  bool   $isTakingNstp  Whether student is enrolled in NSTP this semester
-     * @param  array  $rates         Output of loadRates() — if null, loads fresh
+     * CANONICAL DISCOUNT RULES:
+     *   Lab fee and misc fee are NEVER discounted — they cover consumables,
+     *   equipment, insurance, library, and institutional funds.
+     *   Only tuition is subject to discount.
+     *
+     * @param  int    $lecUnits           Billable lecture units (NSTP/PATHFIT already excluded)
+     * @param  int    $labSubjects        Number of subjects with lab_units > 0
+     * @param  string $discountType       'none' | 'full' | 'nstp'
+     * @param  bool   $isTakingNstp       Whether student is enrolled in NSTP this semester
+     * @param  float  $discountPercentage Optional partial discount percentage (0-100). Applied
+     *                                    AFTER discount_type logic. Floors at NSTP minimum.
+     * @param  array  $rates              Output of loadRates() — if null, loads fresh
      * @return array{
      *   tuition_fee: float,
      *   lab_fee: float,
      *   misc_fee: float,
      *   total: float,
      *   nstp_min_tuition: float,
-     *   discount_applied: string
+     *   discount_applied: string,
+     *   raw_tuition: float
      * }
      */
     public static function compute(
         int    $lecUnits,
         int    $labSubjects,
-        string $discountType  = 'none',
-        bool   $isTakingNstp  = false,
-        ?array $rates         = null
+        string $discountType        = 'none',
+        bool   $isTakingNstp        = false,
+        float  $discountPercentage  = 0.0,
+        ?array $rates               = null
     ): array {
         $rates ??= self::loadRates();
 
         $tuitionPerUnit   = $rates['tuition_per_unit'];
         $labFeePerSubject = $rates['lab_fee_per_subject'];
-        $miscFee          = $rates['misc_total'];
+        // Lab and misc are NEVER discounted per CCDI policy
+        $labFee  = round($labSubjects * $labFeePerSubject, 2);
+        $miscFee = round($rates['misc_total'], 2);
 
         // NSTP minimum tuition (1.5 units × rate)
         $nstpMinTuition = round(self::NSTP_MINIMUM_UNITS * $tuitionPerUnit, 2);
+        $rawTuition     = round($lecUnits * $tuitionPerUnit, 2);
 
-        // Raw fees before discount
-        $rawTuition = round($lecUnits * $tuitionPerUnit, 2);
-        $labFee     = round($labSubjects * $labFeePerSubject, 2);
-
-        // Apply discount per DiscountService logic
+        // ── Step 1: Apply discount_type ───────────────────────────────────────
         $discountApplied = 'none';
 
         if ($discountType === 'full') {
@@ -237,17 +242,26 @@ class AssessmentService
                 $discountApplied = 'full_with_nstp';
             } else {
                 // Full scholarship: tuition = 0
+                // Lab and misc are still charged — per CCDI policy
                 $tuitionFee      = 0.00;
                 $discountApplied = 'full';
             }
         } elseif ($discountType === 'nstp' || $isTakingNstp) {
-            // NSTP waiver: tuition fixed at minimum regardless of unit count
+            // NSTP waiver: tuition fixed at minimum
             $tuitionFee      = $nstpMinTuition;
             $discountApplied = 'nstp';
         } else {
-            // No discount
             $tuitionFee      = $rawTuition;
             $discountApplied = 'none';
+        }
+
+        // ── Step 2: Apply partial discount_percentage on top ──────────────────
+        // Only applies when discount_type = 'none' (percentage-based partial scholarship).
+        // Floors at NSTP minimum. Ignored when discount_type = 'full' or 'nstp'.
+        if ($discountPercentage > 0 && $discountType === 'none') {
+            $discounted      = round($rawTuition * (1 - $discountPercentage / 100), 2);
+            $tuitionFee      = max($nstpMinTuition, $discounted);
+            $discountApplied = "partial_{$discountPercentage}pct";
         }
 
         $total = round($tuitionFee + $labFee + $miscFee, 2);
@@ -259,15 +273,12 @@ class AssessmentService
             'total'            => $total,
             'nstp_min_tuition' => $nstpMinTuition,
             'discount_applied' => $discountApplied,
+            'raw_tuition'      => $rawTuition,
         ];
     }
 
     /**
      * Build payment term records from a total assessment amount.
-     *
-     * @param  float $total
-     * @param  array $rates  Output of loadRates()
-     * @return array
      */
     public static function buildPaymentTerms(float $total, array $rates): array
     {
@@ -333,7 +344,7 @@ class AssessmentService
             '1st'    => '1st Sem',
             '2nd'    => '2nd Sem',
             'Summer' => 'Summer',
-            default  => $semester, // already in DB format
+            default  => $semester,
         };
     }
 

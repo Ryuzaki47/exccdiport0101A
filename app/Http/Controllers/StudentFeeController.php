@@ -219,21 +219,23 @@ class StudentFeeController extends Controller
                 $assessmentNumber = StudentAssessment::generateAssessmentNumber();
 
                 $assessment = StudentAssessment::create([
-                    'assessment_number' => $assessmentNumber,
-                    'user_id'           => $validated['user_id'],
-                    'course'            => $student->course,
-                    'semester'          => $validated['semester'],
-                    'school_year'       => $validated['school_year'],
-                    'lec_units'         => $validated['lec_units'],
-                    'lab_units'         => $validated['lab_units'],
-                    'discount_type'     => $validated['discount_type'],
-                    'is_taking_nstp'    => $validated['is_taking_nstp'],
-                    'tuition_fee'       => $fees['tuition_fee'],
-                    'lab_fee'           => $fees['lab_fee'],
-                    'misc_fee'          => $fees['misc_fee'],
-                    'year_level'        => $student->year_level,
-                    'total_assessment'  => $fees['total'],
-                    'status'            => 'active',
+                    'assessment_number'   => $assessmentNumber,
+                    'user_id'             => $validated['user_id'],
+                    'course'              => $student->course,
+                    'semester'            => $validated['semester'],
+                    'school_year'         => $validated['school_year'],
+                    'lec_units'           => $validated['lec_units'],
+                    'lab_units'           => $validated['lab_units'],
+                    'lab_subjects'        => $validated['lab_units'],
+                    'discount_type'       => $validated['discount_type'],
+                    'discount_percentage' => 0.00,
+                    'is_taking_nstp'      => $validated['is_taking_nstp'],
+                    'tuition_fee'         => $fees['tuition_fee'],
+                    'lab_fee'             => $fees['lab_fee'],
+                    'misc_fee'            => $fees['misc_fee'],
+                    'year_level'          => $student->year_level,
+                    'total_assessment'    => $fees['total'],
+                    'status'              => 'active',
                 ]);
 
                 // Build payment terms

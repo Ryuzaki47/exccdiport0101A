@@ -14,17 +14,13 @@ const { isMobile, state } = useSidebar();
 const unreadCount = computed(() => (page.props as any).unreadNotificationsCount ?? 0);
 const isStudent = computed(() => (user as any)?.role === 'student');
 
-// Only show bell for students and accounting — admins manage notifications, not receive them
+// Only show bell for students
 const showBell = computed(() => {
     const role = (user as any)?.role;
-    return role === 'student' || role === 'accounting';
+    return role === 'student';
 });
 
-const notifRoute = computed(() => {
-    const role = (user as any)?.role;
-    if (role === 'student') return route('student.notifications');
-    return route('notifications.index');
-});
+const notifRoute = computed(() => route('student.notifications'));
 </script>
 
 <template>
