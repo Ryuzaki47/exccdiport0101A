@@ -21,44 +21,46 @@ use App\Models\Subject;
  *
  * ── NSTP / PATHFIT CHED EXCLUSION RULES ──────────────────────────────────────
  *   NSTP subjects:
- *     - Excluded from BILLABLE lec_units (tracked separately as nstp_lec_units)
- *     - NSTP tuition is ALWAYS billed at exactly 1.5 units (per admin instruction)
- *       regardless of how many units are listed in the curriculum.
- *       e.g. even if curriculum says "NSTP = 3 units", billing is 1.5 × ₱364 = ₱546
+ *     - Excluded from BILLABLE lec_units (tracked separately)
+ *     - ALWAYS billed at exactly 1.5 units regardless of curriculum unit count
+ *       e.g. CS-NSTP1 lists 3 units in DB → billing is still 1.5 × ₱364 = ₱546
  *     - NSTP tuition is billed at FULL PRICE regardless of any discount
  *     - Discount percentage NEVER applies to the NSTP portion
+ *     - Detected by str_contains($code, 'NSTP') — NOT str_starts_with —
+ *       because all DB codes have a course prefix (CS-NSTP1, IT-NSTP1, etc.)
  *   PATHFIT / PE subjects:
  *     - Excluded from tuition billing entirely (CHED non-tuition subjects)
- *     - No discount concept — they were never billed to begin with
+ *
+ * ── COURSES WITH NSTP (from ccdi_portal.subjects table) ──────────────────────
+ *   Associate in Computer Technology  → ACT-NSTP1, ACT-NSTP2  (3 lec units in DB)
+ *   BS Computer Science               → CS-NSTP1,  CS-NSTP2   (3 lec units in DB)
+ *   BS Eng. Technology - Electrical   → EET-NSTP1, EET-NSTP2  (3 lec units in DB)
+ *   BS Eng. Technology - Electronics  → ECE-NSTP1, ECE-NSTP2  (3 lec units in DB)
+ *   BS Information Systems            → IS-NSTP1,  IS-NSTP2   (3 lec units in DB)
+ *   BS Information Technology         → IT-NSTP1,  IT-NSTP2   (3 lec units in DB)
+ *   ALL 6 courses → billed at 1.5 units ONLY (not 3)
  *
  * ── DISCOUNT POLICY ───────────────────────────────────────────────────────────
- *   A single discount_percentage (0–100) is the only discount input.
- *   0   → no discount; full billing
- *   >0  → discount applies ONLY to billable (non-NSTP) tuition
+ *   discount_percentage applies ONLY to billable (non-NSTP) tuition.
+ *   NSTP tuition is always billed at full price (1.5 × rate = ₱546).
+ *   Lab and miscellaneous fees are NEVER discounted.
  *
- *   Formula:
- *     discounted_billable = billable_tuition × (1 - pct/100)
- *     final_tuition       = discounted_billable + nstp_tuition
- *     lab_fee             = unchanged  (never discounted)
- *     misc_fee            = unchanged  (never discounted)
- *
- *   Example — BSCS 1st Year 1st Sem (17 billable lec + NSTP, 0% discount):
- *     billable_tuition    = 17 × ₱364 = ₱6,188
- *     nstp_tuition        = 1.5 × ₱364 = ₱546  ← always 1.5, not 3
- *     final_tuition       = ₱6,188 + ₱546 = ₱6,734
- *     lab_fee             = 3 × ₱1,656 = ₱4,968
- *     entrep_fee          = ₱600
- *     misc_fee            = ₱4,700
- *     total               = ₱17,002
+ *   Formula (example: BSCS 1st Yr 1st Sem, no discount):
+ *     billable_tuition = 17 × ₱364 = ₱6,188
+ *     nstp_tuition     = 1.5 × ₱364 = ₱546
+ *     lab_fee          = 3 × ₱1,656 = ₱4,968
+ *     entrep_fee       = ₱600
+ *     misc_fee         = ₱4,700
+ *     total            = ₱17,002
  */
 class AssessmentService
 {
     // ─── Constants ────────────────────────────────────────────────────────────
 
     /**
-     * NSTP billing units — ALWAYS 1.5 regardless of curriculum unit count.
-     * Per admin instruction: even if curriculum lists NSTP as 3 units,
-     * billing is fixed at 1.5 units × tuition rate.
+     * NSTP billing units — ALWAYS 1.5 for ALL courses, regardless of DB value.
+     * DB stores 3 units for every course's NSTP subject.
+     * Admin instruction: bill only 1.5 units = ₱546.00 (at ₱364/unit).
      */
     const NSTP_MINIMUM_UNITS = 1.5;
 
@@ -67,23 +69,14 @@ class AssessmentService
     /**
      * Load all active fee rates from fee_settings table.
      * Falls back to config values if the table is not seeded.
-     *
-     * @return array{
-     *   tuition_per_unit: float,
-     *   lab_fee_per_subject: float,
-     *   entrepreneurship_fee: float,
-     *   misc_total: float,
-     *   misc_items: array,
-     *   payment_terms: array
-     * }
      */
     public static function loadRates(): array
     {
         $settings = FeeSetting::allActive();
 
-        $tuitionPerUnit   = (float) ($settings['tuition_per_unit']?->amount     ?? config('fees.tuition_per_lec_unit', 364.00));
-        $labFeePerSubject = (float) ($settings['lab_fee_per_subject']?->amount   ?? config('fees.lab.per_subject',      1656.00));
-        $entrepreneurFee  = (float) ($settings['entrepreneurship_fee']?->amount  ?? config('fees.lab.entrepreneurship_fee', 600.00));
+        $tuitionPerUnit   = (float) ($settings['tuition_per_unit']?->amount    ?? config('fees.tuition_per_lec_unit', 364.00));
+        $labFeePerSubject = (float) ($settings['lab_fee_per_subject']?->amount  ?? config('fees.lab.per_subject',      1656.00));
+        $entrepreneurFee  = (float) ($settings['entrepreneurship_fee']?->amount ?? config('fees.lab.entrepreneurship_fee', 600.00));
 
         $miscItems = $settings
             ->whereIn('category', ['miscellaneous', 'other'])
@@ -135,19 +128,19 @@ class AssessmentService
     /**
      * Get curriculum subjects for a regular student and compute billable units.
      *
-     * IMPORTANT: nstp_lec_units returned here is ALWAYS 1.5 (NSTP_MINIMUM_UNITS)
-     * when the student has NSTP, regardless of the curriculum unit count.
-     * This is per admin instruction — billing is fixed at 1.5 units.
+     * Handles ALL 6 courses in ccdi_portal:
+     *   - Associate in Computer Technology (ACT)
+     *   - BS Computer Science (BSCS)
+     *   - BS Engineering Technology - Electrical (BSEET)
+     *   - BS Engineering Technology - Electronics (BSEECT)
+     *   - BS Information Systems (BSIS)
+     *   - BS Information Technology (BSIT)
      *
-     * @return array{
-     *   subjects: array,
-     *   billable_lec_units: int,
-     *   nstp_lec_units: float,
-     *   has_nstp: bool,
-     *   lab_subject_count: int,
-     *   pathfit_units: int,
-     *   total_units: int
-     * }
+     * NSTP detection uses str_contains($code, 'NSTP') to match all course-prefixed
+     * codes: CS-NSTP1, IT-NSTP1, ACT-NSTP1, EET-NSTP1, ECE-NSTP1, IS-NSTP1, etc.
+     *
+     * nstp_lec_units returned is ALWAYS 1.5 when NSTP is present —
+     * never the DB value (which is 3 for all 6 courses).
      */
     public static function getCurriculumUnits(string $course, string $yearLevel, string $semester): array
     {
@@ -159,21 +152,23 @@ class AssessmentService
             ->where('is_active', true)
             ->get();
 
-        $billableLecUnits  = 0;
-        $hasNstp           = false;
-        $labSubjectCount   = 0;
-        $pathfitUnits      = 0;
-        $subjectList       = [];
+        $billableLecUnits = 0;
+        $hasNstp          = false;
+        $labSubjectCount  = 0;
+        $pathfitUnits     = 0;
+        $subjectList      = [];
 
         foreach ($subjects as $subj) {
             $isNstp    = self::isNstpSubject($subj->code, $subj->name);
             $isPathfit = self::isPathfitSubject($subj->code, $subj->name);
 
             if ($isNstp) {
-                // NSTP: mark presence only — billing is always 1.5 units flat
+                // Mark NSTP presence only — billing units are fixed at 1.5, NOT the DB value (3)
+                // Applies to: CS-NSTP1/2, IT-NSTP1/2, ACT-NSTP1/2,
+                //             EET-NSTP1/2, ECE-NSTP1/2, IS-NSTP1/2
                 $hasNstp = true;
             } elseif ($isPathfit) {
-                // PATHFIT/PE: excluded from billing entirely (CHED non-tuition)
+                // PATHFIT/PE: excluded from billing per CHED
                 $pathfitUnits += (int) ($subj->lec_units ?? 0);
             } else {
                 // Normal billable subject
@@ -196,13 +191,13 @@ class AssessmentService
             ];
         }
 
-        // NSTP billing is ALWAYS 1.5 units — never the curriculum unit count
+        // NSTP billing is ALWAYS 1.5 units for ALL courses — never the DB value (3)
         $nstpBillingUnits = $hasNstp ? self::NSTP_MINIMUM_UNITS : 0;
 
         return [
             'subjects'           => $subjectList,
             'billable_lec_units' => $billableLecUnits,
-            'nstp_lec_units'     => $nstpBillingUnits, // always 1.5 when NSTP is present
+            'nstp_lec_units'     => $nstpBillingUnits, // always 1.5, never 3
             'has_nstp'           => $hasNstp,
             'lab_subject_count'  => $labSubjectCount,
             'pathfit_units'      => $pathfitUnits,
@@ -215,32 +210,21 @@ class AssessmentService
     /**
      * Compute the full assessment fee breakdown.
      *
-     * NSTP RULE: $nstpLecUnits is clamped to NSTP_MINIMUM_UNITS (1.5) whenever
-     * it is > 0. This enforces the admin instruction that NSTP is ALWAYS billed
-     * at exactly 1.5 units regardless of the curriculum value passed in.
+     * NSTP RULE (enforced for ALL 6 courses):
+     *   $nstpLecUnits is clamped to NSTP_MINIMUM_UNITS (1.5) when > 0.
+     *   This is the final safety net — even if a caller accidentally passes 3,
+     *   it will be clamped to 1.5 before computing.
      *
      * DISCOUNT RULE:
      *   discount_percentage applies ONLY to billable (non-NSTP) tuition.
-     *   NSTP tuition is always billed at full price.
+     *   NSTP tuition (1.5 × ₱364 = ₱546) is always billed at full price.
      *   Lab and miscellaneous fees are NEVER discounted.
      *
-     * @param  int        $lecUnits            Billable lecture units (NSTP/PATHFIT excluded)
-     * @param  int        $labSubjects          Number of subjects with lab_units > 0
-     * @param  float      $nstpLecUnits         NSTP units from curriculum (will be clamped to 1.5)
-     * @param  float      $discountPercentage   0–100. 0 means no discount.
-     * @param  array|null $rates                Output of loadRates(). Loaded fresh if null.
-     * @return array{
-     *   tuition_fee: float,
-     *   billable_tuition: float,
-     *   nstp_tuition: float,
-     *   lab_fee: float,
-     *   entrepreneurship_fee: float,
-     *   misc_fee: float,
-     *   total: float,
-     *   discount_saving: float,
-     *   discount_applied: string,
-     *   raw_billable_tuition: float
-     * }
+     * @param  int        $lecUnits            Billable lec units (NSTP/PATHFIT excluded)
+     * @param  int        $labSubjects         Number of subjects with lab_units > 0
+     * @param  float      $nstpLecUnits        NSTP units — clamped to 1.5 if > 0
+     * @param  float      $discountPercentage  0–100. 0 = no discount.
+     * @param  array|null $rates               Output of loadRates(). Loaded fresh if null.
      */
     public static function compute(
         int    $lecUnits,
@@ -251,14 +235,15 @@ class AssessmentService
     ): array {
         $rates ??= self::loadRates();
 
-        // ── NSTP BILLING RULE ──────────────────────────────────────────────────
-        // NSTP is ALWAYS billed at exactly 1.5 units per admin instruction.
-        // The curriculum may list NSTP as 3 units, but billing is fixed at 1.5.
-        // This applies to ALL programs and ALL year levels.
+        // ── NSTP BILLING RULE — ALL 6 COURSES ────────────────────────────────
+        // DB stores NSTP as 3 lec_units for every course.
+        // Admin instruction: ALWAYS bill at 1.5 units only.
+        // Codes: CS-NSTP1/2, IT-NSTP1/2, ACT-NSTP1/2,
+        //        EET-NSTP1/2, ECE-NSTP1/2, IS-NSTP1/2
         if ($nstpLecUnits > 0) {
-            $nstpLecUnits = self::NSTP_MINIMUM_UNITS; // enforce 1.5
+            $nstpLecUnits = self::NSTP_MINIMUM_UNITS; // clamp to 1.5
         }
-        // ───────────────────────────────────────────────────────────────────────
+        // ─────────────────────────────────────────────────────────────────────
 
         $tuitionPerUnit   = $rates['tuition_per_unit'];
         $labFeePerSubject = $rates['lab_fee_per_subject'];
@@ -268,11 +253,11 @@ class AssessmentService
         $labFee  = round($labSubjects * $labFeePerSubject, 2);
         $miscFee = round($rates['misc_total'], 2);
 
-        // Compute tuition components
+        // Tuition components
         $rawBillableTuition = round($lecUnits * $tuitionPerUnit, 2);
-        $nstpTuition        = round($nstpLecUnits * $tuitionPerUnit, 2); // always 1.5 × rate
+        $nstpTuition        = round($nstpLecUnits * $tuitionPerUnit, 2); // 1.5 × 364 = 546
 
-        // Apply discount ONLY to billable (non-NSTP) tuition
+        // Discount applies ONLY to billable (non-NSTP) tuition
         if ($discountPercentage > 0 && $discountPercentage <= 100) {
             $discountSaving     = round($rawBillableTuition * ($discountPercentage / 100), 2);
             $discountedBillable = round($rawBillableTuition - $discountSaving, 2);
@@ -301,8 +286,7 @@ class AssessmentService
     }
 
     /**
-     * Convenience wrapper: compute() accepts the legacy $isTakingNstp bool
-     * for backward compatibility with callers that haven't been migrated yet.
+     * Legacy wrapper — kept for backward compatibility.
      *
      * @deprecated Pass nstpLecUnits directly to compute() instead.
      */
@@ -314,7 +298,7 @@ class AssessmentService
         ?array $rates              = null
     ): array {
         $rates        ??= self::loadRates();
-        // When using the legacy flag, pass 1 so compute() clamps it to 1.5
+        // Pass 1 so compute() clamps to 1.5 via NSTP_MINIMUM_UNITS
         $nstpLecUnits   = $isTakingNstp ? 1 : 0;
 
         return self::compute($lecUnits, $labSubjects, $nstpLecUnits, $discountPercentage, $rates);
@@ -350,21 +334,31 @@ class AssessmentService
     // ─── Subject Classification Helpers ───────────────────────────────────────
 
     /**
-     * NSTP subjects: excluded from billable lec_units AND from discount.
-     * Their tuition is always charged at full price (fixed at 1.5 units).
+     * Detect NSTP subjects for ALL 6 courses in ccdi_portal.
+     *
+     * Uses str_contains($code, 'NSTP') — NOT str_starts_with — because
+     * every course prefixes the code before NSTP:
+     *   ACT-NSTP1, ACT-NSTP2  → Associate in Computer Technology
+     *   CS-NSTP1,  CS-NSTP2   → BS Computer Science
+     *   EET-NSTP1, EET-NSTP2  → BS Engineering Technology - Electrical
+     *   ECE-NSTP1, ECE-NSTP2  → BS Engineering Technology - Electronics
+     *   IS-NSTP1,  IS-NSTP2   → BS Information Systems
+     *   IT-NSTP1,  IT-NSTP2   → BS Information Technology
+     *
+     * All of the above return true from this method.
+     * All of them will be billed at 1.5 units (not 3) via NSTP_MINIMUM_UNITS.
      */
     public static function isNstpSubject(string $code, string $name): bool
     {
         $code = strtoupper(trim($code));
         $name = strtoupper(trim($name));
 
-        return str_starts_with($code, 'NSTP')
+        return str_contains($code, 'NSTP')
             || str_contains($name, 'NATIONAL SERVICE TRAINING');
     }
 
     /**
      * PATHFIT/PE subjects: excluded from tuition billing per CHED.
-     * They have no discount concept since they are not billed.
      */
     public static function isPathfitSubject(string $code, string $name): bool
     {
