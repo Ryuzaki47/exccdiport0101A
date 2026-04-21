@@ -567,6 +567,8 @@ class PaymentController extends Controller
                 'selected_term_id' => 'nullable|exists:student_payment_terms,id',
             ]);
 
+            $term = null;
+
             // Verify term belongs to this student if provided
             if ($validated['selected_term_id']) {
                 $term = StudentPaymentTerm::find($validated['selected_term_id']);
@@ -579,9 +581,8 @@ class PaymentController extends Controller
                 }
             }
 
-            $assessment = isset($term)
-                ? $term->assessment
-                : StudentAssessment::where('user_id', $user->id)->where('status', 'active')->latest()->first();
+            $assessment = $term?->assessment
+                ?? StudentAssessment::where('user_id', $user->id)->where('status', 'active')->latest()->first();
 
             Log::info('Bank transfer: creating records', [
                 'user_id'          => $user->id,
