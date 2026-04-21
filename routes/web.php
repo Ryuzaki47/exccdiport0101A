@@ -60,6 +60,9 @@ Route::middleware(['auth', 'verified', 'role:student'])->prefix('student')->grou
     Route::post('/payment/{transaction}/proof', [PaymentController::class, 'uploadProof'])->name('payment.proof.upload');
     Route::get('/notifications', [NotificationController::class, 'studentIndex'])->name('student.notifications');
     Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllRead'])->name('student.notifications.mark-all-read');
+
+    // ✅ FIX: Named dismiss route for student notifications
+    Route::post('/notifications/{notification}/dismiss', [NotificationController::class, 'dismiss'])->name('notifications.dismiss');
 });
 
 // ============================================
@@ -158,6 +161,9 @@ Route::middleware(['auth', 'verified', 'role:admin'])->prefix('admin')->group(fu
         'update'  => 'admin.notifications.update',
         'destroy' => 'admin.notifications.destroy',
     ]);
+    // ✅ FIX: Admin can also dismiss notifications (for their own banner management)
+    Route::post('notifications/{notification}/dismiss', [NotificationController::class, 'dismiss'])->name('admin.notifications.dismiss');
+
     Route::get('/payment-terms', [PaymentTermsController::class, 'index'])->name('admin.payment-terms.index');
     Route::post('/payment-terms/{paymentTerm}/due-date', [PaymentTermsController::class, 'updateDueDate'])->name('admin.payment-terms.update-due-date');
     Route::post('/payment-terms/bulk-due-date', [PaymentTermsController::class, 'bulkUpdateDueDate'])->name('admin.payment-terms.bulk-due-date');
