@@ -354,16 +354,71 @@ class PaymentController extends Controller
                     ->with('flash.info', 'Your payment has been received and is awaiting accounting review.');
             }
 
-            // Payment succeeded on PayMongo but we have no local record — log critical
-            Log::critical('PayMongo success: payment succeeded but no local Payment row exists', [
-                'session_id'        => $sessionId,
-                'payment_intent_id' => $paymentIntentId,
-                'user_id'           => auth()->id(),
-                'amount'            => data_get($session, 'attributes.amount'),
-            ]);
+            // No Payment row, no Transaction — payment is real but our createCheckout()
+            // failed to persist the row. Recover by creating both records now.
+            $user = auth()->user();
+            $amountInPesos = data_get($session, 'attributes.amount') / 100;
 
-            return redirect()->route('student.account')
-                ->with('flash.error', 'Payment received but could not be matched to your account. Please contact accounting with reference: ' . $paymentIntentId);
+            $recoveredTransaction = null;
+
+            DB::transaction(function () use (
+                $user, $sessionId, $paymentIntentId, $amountInPesos, $session, &$recoveredTransaction
+            ) {
+                $termId      = null; // unknown — no Payment row to read meta from
+                $description = data_get($session, 'attributes.description') ?? 'PayMongo Payment';
+
+                // Create the missing Payment row
+                Payment::create([
+                    'user_id'            => $user->id,
+                    'amount'             => $amountInPesos,
+                    'description'        => $description . ' (recovered)',
+                    'payment_method'     => 'paymongo_checkout',
+                    'status'             => 'completed',
+                    'paymongo_source_id' => $sessionId,
+                    'paymongo_intent_id' => $paymentIntentId,
+                    'meta'               => [
+                        'payment_method'     => 'paymongo',
+                        'paymongo_checkout'  => true,
+                        'recovered'          => true,
+                        'recovered_at'       => now()->toISOString(),
+                    ],
+                ]);
+
+                $recoveredTransaction = Transaction::create([
+                    'user_id'         => $user->id,
+                    'kind'            => 'payment',
+                    'status'          => PaymentStatus::AWAITING_APPROVAL->value,
+                    'payment_channel' => 'paymongo',
+                    'amount'          => $amountInPesos,
+                    'reference'       => "PAY-{$paymentIntentId}",
+                    'type'            => 'Payment',
+                    'paid_at'         => now(),
+                    'year'            => now()->year,
+                    'meta'            => [
+                        'description'         => $description,
+                        'paymongo_session_id' => $sessionId,
+                        'paymongo_intent_id'  => $paymentIntentId,
+                        'payment_method'      => 'paymongo',
+                        'requires_approval'   => true,
+                        'recovered'           => true,
+                    ],
+                ]);
+
+                Log::warning('PayMongo success: recovered missing Payment row on redirect', [
+                    'user_id'           => $user->id,
+                    'session_id'        => $sessionId,
+                    'payment_intent_id' => $paymentIntentId,
+                    'amount'            => $amountInPesos,
+                    'transaction_id'    => $recoveredTransaction->id,
+                ]);
+            });
+
+            if ($recoveredTransaction) {
+                $this->startPaymentApprovalWorkflow($recoveredTransaction->id, $user->id);
+            }
+
+            return redirect()->route('student.account', ['tab' => 'history'])
+                ->with('flash.success', 'Payment received! Your payment is awaiting accounting verification.');
         }
 
         if ($payment->status === 'completed') {
