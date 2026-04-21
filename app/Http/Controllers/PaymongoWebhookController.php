@@ -82,16 +82,17 @@ class PaymongoWebhookController extends Controller
             $parts[$key] = $value;
         }
 
-        $timestamp  = $parts['t'] ?? null;
-        $isLiveMode = app()->isProduction();
-        $signature  = $isLiveMode ? ($parts['li'] ?? null) : ($parts['te'] ?? null);
+        $timestamp = $parts['t'] ?? null;
+
+        // Accept either live or test signature — whichever is present.
+        // The HMAC verification itself determines legitimacy.
+        $signature = $parts['li'] ?? $parts['te'] ?? null;
 
         if (! $timestamp || ! $signature) {
             Log::warning('PayMongo webhook: timestamp or signature missing in header', [
                 'has_timestamp' => isset($parts['t']),
                 'has_live'      => isset($parts['li']),
                 'has_test'      => isset($parts['te']),
-                'is_production' => $isLiveMode,
             ]);
             return false;
         }

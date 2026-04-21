@@ -3,6 +3,7 @@
 namespace App\Console;
 
 use App\Console\Commands\CheckOverduePayments;
+use App\Console\Commands\CheckQueueHealth;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
 
@@ -24,6 +25,12 @@ class Kernel extends ConsoleKernel
             ->dailyAt('12:00')
             ->name('check-overdue-payments-noon')
             ->description('Check for overdue payments and generate reminders (noon check)');
+
+        // Monitor queue health every 5 minutes
+        $schedule->command(CheckQueueHealth::class, ['--threshold=100'])
+            ->everyFiveMinutes()
+            ->name('queue-health-check')
+            ->description('Alert if queue backlog exceeds threshold');
     }
 
     /**

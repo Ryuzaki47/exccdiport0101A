@@ -553,58 +553,92 @@ class PaymentController extends Controller
      */
     public function submitBankTransfer(Request $request)
     {
-        $user = $request->user();
+        try {
+            $user = $request->user();
 
-        $validated = $request->validate([
-            'amount'           => 'required|numeric|min:100',
-            'reference_number' => 'required|string|max:100',
-            'selected_term_id' => 'nullable|exists:student_payment_terms,id',
-        ]);
-
-        // Verify term belongs to this student if provided
-        if ($validated['selected_term_id']) {
-            $term = StudentPaymentTerm::find($validated['selected_term_id']);
-            if (! $term || $term->assessment?->user_id !== $user->id) {
-                abort(403, 'Invalid payment term.');
+            if (! $user) {
+                Log::error('Bank transfer: user not authenticated');
+                return response()->json(['error' => 'Unauthorized'], 401);
             }
+
+            $validated = $request->validate([
+                'amount'           => 'required|numeric|min:100',
+                'reference_number' => 'required|string|max:100',
+                'selected_term_id' => 'nullable|exists:student_payment_terms,id',
+            ]);
+
+            // Verify term belongs to this student if provided
+            if ($validated['selected_term_id']) {
+                $term = StudentPaymentTerm::find($validated['selected_term_id']);
+                if (! $term || $term->assessment?->user_id !== $user->id) {
+                    Log::warning('Bank transfer: invalid term access', [
+                        'user_id' => $user->id,
+                        'term_id' => $validated['selected_term_id'],
+                    ]);
+                    abort(403, 'Invalid payment term.');
+                }
+            }
+
+            $assessment = isset($term)
+                ? $term->assessment
+                : StudentAssessment::where('user_id', $user->id)->where('status', 'active')->latest()->first();
+
+            Log::info('Bank transfer: creating records', [
+                'user_id'          => $user->id,
+                'assessment_id'    => $assessment?->id,
+                'amount'           => $validated['amount'],
+                'reference_number' => $validated['reference_number'],
+            ]);
+
+            $payment = Payment::create([
+                'user_id'               => $user->id,
+                'student_assessment_id' => $assessment?->id,
+                'amount'                => $validated['amount'],
+                'payment_method'        => 'bank_transfer',
+                'status'                => 'pending',
+                'description'           => 'Bank Transfer - PNB Ref: ' . $validated['reference_number'],
+                'meta'                  => [
+                    'reference_number' => $validated['reference_number'],
+                    'selected_term_id' => $validated['selected_term_id'] ?? null,
+                ],
+            ]);
+
+            $transaction = Transaction::create([
+                'user_id'               => $user->id,
+                'student_assessment_id' => $assessment?->id,
+                'amount'                => $validated['amount'],
+                'type'                  => 'payment',
+                'kind'                  => 'payment',
+                'payment_method'        => 'bank_transfer',
+                'status'                => PaymentStatus::AWAITING_PROOF->value,
+                'description'           => 'Bank Transfer - PNB Ref: ' . $validated['reference_number'],
+                'meta'                  => [
+                    'reference_number' => $validated['reference_number'],
+                    'selected_term_id' => $validated['selected_term_id'] ?? null,
+                ],
+            ]);
+
+            Log::info('Bank transfer: success', [
+                'payment_id'      => $payment->id,
+                'transaction_id'  => $transaction->id,
+            ]);
+
+            return response()->json([
+                'message'        => 'Bank transfer submitted successfully.',
+                'transaction_id' => $transaction->id,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Bank transfer error', [
+                'user_id' => $request->user()?->id,
+                'error'   => $e->getMessage(),
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to submit bank transfer: ' . $e->getMessage(),
+            ], 500);
         }
-
-        $assessment = isset($term)
-            ? $term->assessment
-            : StudentAssessment::where('user_id', $user->id)->where('status', 'active')->latest()->first();
-
-        Payment::create([
-            'user_id'               => $user->id,
-            'student_assessment_id' => $assessment?->id,
-            'amount'                => $validated['amount'],
-            'payment_method'        => 'bank_transfer',
-            'status'                => 'pending',
-            'description'           => 'Bank Transfer - PNB Ref: ' . $validated['reference_number'],
-            'meta'                  => [
-                'reference_number' => $validated['reference_number'],
-                'selected_term_id' => $validated['selected_term_id'] ?? null,
-            ],
-        ]);
-
-        $transaction = Transaction::create([
-            'user_id'               => $user->id,
-            'student_assessment_id' => $assessment?->id,
-            'amount'                => $validated['amount'],
-            'type'                  => 'payment',
-            'kind'                  => 'payment',
-            'payment_method'        => 'bank_transfer',
-            'status'                => PaymentStatus::AWAITING_PROOF->value,
-            'description'           => 'Bank Transfer - PNB Ref: ' . $validated['reference_number'],
-            'meta'                  => [
-                'reference_number' => $validated['reference_number'],
-                'selected_term_id' => $validated['selected_term_id'] ?? null,
-            ],
-        ]);
-
-        return response()->json([
-            'message'        => 'Bank transfer submitted successfully.',
-            'transaction_id' => $transaction->id,
-        ]);
     }
 
     public function checkStatus(Request $request)
