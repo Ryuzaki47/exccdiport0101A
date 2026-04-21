@@ -113,7 +113,6 @@ const curriculumLoading  = ref(false)
 const curriculumSubjects = ref<CurriculumSubject[]>([])
 const curriculumMessage  = ref('')
 
-// NSTP detection — populated from getCurriculumUnits API
 const hasNstp      = ref(false)
 const nstpLecUnits = ref(0)
 
@@ -166,31 +165,20 @@ const form = useForm({
   school_year:         '',
   lec_units:           0,
   lab_subjects:        0,
-  nstp_lec_units:      0,      // passed to backend so NSTP tuition is computed at full price
+  nstp_lec_units:      0,
   discount_percentage: 0 as number,
 })
 
 const currentYear = new Date().getFullYear()
 form.school_year  = `${currentYear}-${currentYear + 1}`
 
-// Keep form.nstp_lec_units in sync with what the curriculum API returned
 watch(nstpLecUnits, (val) => { form.nstp_lec_units = val })
 
 watch([selectedStudent, () => form.semester], () => {
   if (selectedStudent.value && ! selectedStudent.value.is_irregular) loadCurriculum()
 })
 
-// ─── Live Fee Computation — mirrors AssessmentService::compute() ──────────────
-//
-// NSTP portion is always full price. Discount applies ONLY to billable tuition.
-//
-//   billable_tuition   = lec_units × rate
-//   nstp_tuition       = nstp_lec_units × rate   ← always full, never discounted
-//   discount_saving    = billable_tuition × (pct / 100)
-//   discounted_tuition = billable_tuition - discount_saving
-//   final_tuition      = discounted_tuition + nstp_tuition
-//   lab_fee            = lab_subjects × lab_rate  + entrepreneurship_fee
-//   total              = final_tuition + lab_fee + misc_fee
+// ─── Live Fee Computation ──────────────────────────────────────────────────────
 
 const rate = computed(() => props.feeRates.tuition_per_unit)
 
@@ -330,7 +318,7 @@ function submit() {
             </CardContent>
           </Card>
 
-          <!-- Curriculum Auto-Fill Banner (Regular Students) -->
+          <!-- Curriculum Auto-Fill (Regular Students) -->
           <div v-if="selectedStudent && !selectedStudent.is_irregular" class="space-y-2">
             <!-- Loading -->
             <div v-if="curriculumLoading"
@@ -338,13 +326,51 @@ function submit() {
               <Loader2 class="h-4 w-4 animate-spin shrink-0" />
               Loading curriculum…
             </div>
-            <!-- Success -->
-            <div v-else-if="curriculumSubjects.length > 0"
-              class="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-              <CheckCircle2 class="h-4 w-4 shrink-0 text-green-600" />
-              Units auto-filled from curriculum — {{ form.lec_units }} LEC unit{{ form.lec_units !== 1 ? 's' : '' }}, {{ form.lab_subjects }} lab subject{{ form.lab_subjects !== 1 ? 's' : '' }}.
-              You can override below if needed.
-            </div>
+
+            <!-- Success — Curriculum Table showing units only (no Code / Subject columns) -->
+            <Card v-else-if="curriculumSubjects.length > 0" class="border-green-200">
+              <CardHeader class="pb-2">
+                <CardTitle class="text-sm flex items-center gap-2 text-green-800">
+                  <BookOpen class="h-4 w-4 text-green-600" />
+                  Curriculum — {{ selectedStudent.course }}, {{ selectedStudent.year_level }}
+                </CardTitle>
+              </CardHeader>
+              <CardContent class="pt-0">
+                <div class="overflow-x-auto rounded-md border border-green-100">
+                  <table class="w-full text-sm">
+                    <thead class="bg-green-50 text-green-800">
+                      <tr>
+                        <th class="text-center px-6 py-2 font-semibold text-xs uppercase tracking-wide">LEC</th>
+                        <th class="text-center px-6 py-2 font-semibold text-xs uppercase tracking-wide">LAB</th>
+                        <th class="text-center px-6 py-2 font-semibold text-xs uppercase tracking-wide">Billable</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-green-50">
+                      <tr
+                        v-for="subject in curriculumSubjects"
+                        :key="subject.id"
+                        class="hover:bg-green-50/50 transition-colors"
+                      >
+                        <td class="text-center px-6 py-2 tabular-nums">{{ subject.lec_units }}</td>
+                        <td class="text-center px-6 py-2 tabular-nums">{{ subject.lab_units }}</td>
+                        <td class="text-center px-6 py-2">
+                          <CheckCircle2 v-if="subject.is_billable" class="h-4 w-4 text-green-500 mx-auto" />
+                          <span v-else class="text-muted-foreground">—</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p class="mt-2 text-xs text-green-700 flex items-center gap-1.5">
+                  <CheckCircle2 class="h-3.5 w-3.5 text-green-500 shrink-0" />
+                  {{ curriculumSubjects.filter(s => s.is_billable).length }} billable subject{{ curriculumSubjects.filter(s => s.is_billable).length !== 1 ? 's' : '' }}
+                  · {{ form.lec_units }} LEC unit{{ form.lec_units !== 1 ? 's' : '' }}
+                  · {{ form.lab_subjects }} with lab
+                  — <span class="italic">override in Units Enrolled below if needed</span>
+                </p>
+              </CardContent>
+            </Card>
+
             <!-- Warning / not found -->
             <div v-else-if="curriculumMessage"
               class="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -419,7 +445,6 @@ function submit() {
             </CardHeader>
             <CardContent class="space-y-4">
 
-              <!-- NSTP notice banner — shown automatically when curriculum has NSTP -->
               <div v-if="hasNstp"
                 class="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-300 p-3 text-sm text-amber-900">
                 <AlertTriangle class="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
@@ -434,14 +459,12 @@ function submit() {
                 </div>
               </div>
 
-              <!-- Percentage input -->
               <div class="space-y-3">
                 <Label for="discount_percentage">Discount Percentage (%)</Label>
                 <p class="text-xs text-muted-foreground -mt-2">
                   Enter 0 for no discount. Applies to billable tuition only — lab and miscellaneous fees are never discounted.
                 </p>
 
-                <!-- Quick-select presets -->
                 <div class="flex gap-1.5 flex-wrap">
                   <button
                     v-for="preset in [0, 10, 20, 25, 50, 75, 100]"
@@ -459,7 +482,6 @@ function submit() {
                   </button>
                 </div>
 
-                <!-- Freeform input -->
                 <div class="flex items-center gap-3">
                   <Input
                     id="discount_percentage"
@@ -478,14 +500,12 @@ function submit() {
                 </p>
               </div>
 
-              <!-- Discount breakdown preview -->
               <div
                 v-if="form.discount_percentage > 0"
                 class="rounded-md bg-green-50 border border-green-200 p-3 space-y-1.5 text-sm"
               >
                 <p class="font-semibold text-xs uppercase tracking-wide text-green-700 mb-2">Effective Fees After Discount</p>
 
-                <!-- Show billable vs NSTP split when NSTP exists -->
                 <template v-if="hasNstp">
                   <div class="flex justify-between text-green-800 text-xs">
                     <span>Billable tuition ({{ form.lec_units }} units, before discount)</span>
@@ -596,7 +616,6 @@ function submit() {
                 <span class="text-blue-600">{{ formatCurrency(totalAssessment) }}</span>
               </div>
 
-              <!-- Payment Terms Preview -->
               <div v-if="totalAssessment > 0" class="mt-3 border-t pt-3">
                 <p class="text-xs font-semibold uppercase text-muted-foreground mb-2">
                   Payment Schedule ({{ feeRates.payment_terms.length }} terms)
