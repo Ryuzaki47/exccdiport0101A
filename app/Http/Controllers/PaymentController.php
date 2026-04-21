@@ -617,7 +617,6 @@ class PaymentController extends Controller
 
     /**
      * Submit a manual bank transfer payment for the authenticated student.
-     * FIX Bug #3: Added auth check, user_id from auth, removed raw student_id input.
      */
     public function submitBankTransfer(Request $request)
     {
@@ -637,7 +636,6 @@ class PaymentController extends Controller
 
             $term = null;
 
-            // Verify term belongs to this student if provided
             if ($validated['selected_term_id']) {
                 $term = StudentPaymentTerm::find($validated['selected_term_id']);
                 if (! $term || $term->assessment?->user_id !== $user->id) {
@@ -650,7 +648,10 @@ class PaymentController extends Controller
             }
 
             $assessment = $term?->assessment
-                ?? StudentAssessment::where('user_id', $user->id)->where('status', 'active')->latest()->first();
+                ?? StudentAssessment::where('user_id', $user->id)
+                    ->where('status', 'active')
+                    ->latest()
+                    ->first();
 
             Log::info('Bank transfer: creating records', [
                 'user_id'          => $user->id,
@@ -659,43 +660,58 @@ class PaymentController extends Controller
                 'reference_number' => $validated['reference_number'],
             ]);
 
-            $payment = Payment::create([
-                'user_id'               => $user->id,
-                'student_assessment_id' => $assessment?->id,
-                'amount'                => $validated['amount'],
-                'payment_method'        => 'bank_transfer',
-                'status'                => 'pending',
-                'description'           => 'Bank Transfer - PNB Ref: ' . $validated['reference_number'],
-                'meta'                  => [
-                    'reference_number' => $validated['reference_number'],
-                    'selected_term_id' => $validated['selected_term_id'] ?? null,
-                ],
-            ]);
+            $payment     = null;
+            $transaction = null;
 
-            $transaction = Transaction::create([
-                'user_id'               => $user->id,
-                'student_assessment_id' => $assessment?->id,
-                'amount'                => $validated['amount'],
-                'type'                  => 'payment',
-                'kind'                  => 'payment',
-                'payment_method'        => 'bank_transfer',
-                'status'                => PaymentStatus::AWAITING_PROOF->value,
-                'description'           => 'Bank Transfer - PNB Ref: ' . $validated['reference_number'],
-                'meta'                  => [
-                    'reference_number' => $validated['reference_number'],
-                    'selected_term_id' => $validated['selected_term_id'] ?? null,
-                ],
-            ]);
+            DB::transaction(function () use ($user, $assessment, $term, $validated, &$payment, &$transaction) {
+                $payment = Payment::create([
+                    'user_id'               => $user->id,
+                    'student_assessment_id' => $assessment?->id,
+                    'amount'                => $validated['amount'],
+                    'payment_method'        => 'bank_transfer',
+                    'status'                => 'pending',
+                    'description'           => 'Bank Transfer - Ref: ' . $validated['reference_number'],
+                    'meta'                  => [
+                        'reference_number' => $validated['reference_number'],
+                        'selected_term_id' => $validated['selected_term_id'] ?? null,
+                        'term_name'        => $term?->term_name ?? 'Payment',
+                    ],
+                ]);
+
+                // ── IMPORTANT: Only use fields in Transaction::$fillable ──────────
+                // Fillable: user_id, account_id, fee_id, reference, payment_channel,
+                //           kind, type, amount, status, paid_at, meta, year, semester
+                // NOT fillable: student_assessment_id, payment_method
+                $transaction = Transaction::create([
+                    'user_id'         => $user->id,
+                    'kind'            => 'payment',
+                    'type'            => 'payment',
+                    'payment_channel' => 'bank_transfer',
+                    'status'          => PaymentStatus::AWAITING_PROOF->value, // 'awaiting_proof'
+                    'amount'          => $validated['amount'],
+                    'reference'       => 'BT-' . strtoupper($validated['reference_number']),
+                    'year'            => now()->year,
+                    'semester'        => $term?->assessment?->semester ?? null,
+                    'meta'            => [
+                        'reference_number' => $validated['reference_number'],
+                        'selected_term_id' => $validated['selected_term_id'] ?? null,
+                        'term_name'        => $term?->term_name ?? 'Payment',
+                        'payment_id'       => $payment->id,
+                        'requires_proof'   => true,
+                    ],
+                ]);
+            });
 
             Log::info('Bank transfer: success', [
-                'payment_id'      => $payment->id,
-                'transaction_id'  => $transaction->id,
+                'payment_id'     => $payment->id,
+                'transaction_id' => $transaction->id,
             ]);
 
             return response()->json([
-                'message'        => 'Bank transfer submitted successfully.',
+                'message'        => 'Bank transfer submitted successfully. Please upload your proof of payment.',
                 'transaction_id' => $transaction->id,
             ]);
+
         } catch (\Exception $e) {
             Log::error('Bank transfer error', [
                 'user_id' => $request->user()?->id,
