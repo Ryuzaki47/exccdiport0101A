@@ -92,6 +92,10 @@ Route::middleware(['auth', 'verified', 'role:admin,accounting'])
         // Auto-populate curriculum units for the Create form
         Route::get('/curriculum-units', [StudentFeeController::class, 'getCurriculumUnits'])->name('curriculum-units');
 
+        // ── Create and store assessments (was accounting-only — now shared) ──
+        Route::get('/create', [StudentFeeController::class, 'create'])->name('create');
+        Route::post('/', [StudentFeeController::class, 'store'])->name('store');
+
         Route::get('/{userId}/export-pdf', [StudentFeeController::class, 'exportPdf'])->whereNumber('userId')->name('export-pdf');
         Route::post('/{userId}/payments', [StudentFeeController::class, 'storePayment'])->whereNumber('userId')->name('payments.store');
         Route::post('/{user}/drop', [StudentFeeController::class, 'drop'])->whereNumber('user')->name('drop');
@@ -111,15 +115,6 @@ Route::middleware(['auth', 'verified', 'role:admin'])
         Route::put('/{userId}', [StudentFeeController::class, 'update'])->whereNumber('userId')->name('update');
         Route::get('/{student}/edit-student', [StudentFeeController::class, 'editStudent'])->name('edit-student');
         Route::put('/{student}/update-student', [StudentFeeController::class, 'updateStudent'])->name('update-student');
-    });
-
-// ── Accounting-only: Create and store assessments ─────────────────────────────
-Route::middleware(['auth', 'verified', 'role:accounting'])
-    ->prefix('student-fees')
-    ->name('student-fees.')
-    ->group(function () {
-        Route::get('/create', [StudentFeeController::class, 'create'])->name('create');
-        Route::post('/', [StudentFeeController::class, 'store'])->name('store');
     });
 
 // ============================================

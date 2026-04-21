@@ -173,13 +173,13 @@ class StudentFeeController extends Controller
             'school_year'         => ['required', 'string', 'max:20'],
             'lec_units'           => ['required', 'numeric', 'min:0', 'max:50'],
             'lab_units'           => ['required', 'integer', 'min:0', 'max:20'],
-            'nstp_lec_units'      => ['nullable', 'integer', 'min:0', 'max:10'],
+            'nstp_lec_units'      => ['nullable', 'numeric', 'min:0', 'max:10'],
             'discount_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
         $validated['lec_units']           = (int) $validated['lec_units'];
         $validated['lab_units']           = (int) $validated['lab_units'];
-        $validated['nstp_lec_units']      = (int) ($validated['nstp_lec_units'] ?? 0);
+        $validated['nstp_lec_units']      = (float) ($validated['nstp_lec_units'] ?? 0);
         $validated['discount_percentage'] = (float) ($validated['discount_percentage'] ?? 0.0);
 
         try {
@@ -227,7 +227,6 @@ class StudentFeeController extends Controller
                     'school_year'         => $validated['school_year'],
                     'lec_units'           => $validated['lec_units'],
                     'lab_units'           => $validated['lab_units'],
-                    'lab_subjects'        => $validated['lab_units'],
                     'discount_type'       => $validated['discount_percentage'] > 0 ? 'percentage' : 'none',
                     'discount_percentage' => $validated['discount_percentage'],
                     'is_taking_nstp'      => $validated['nstp_lec_units'] > 0,
@@ -507,13 +506,13 @@ class StudentFeeController extends Controller
             'school_year'         => ['required', 'string', 'max:20'],
             'lec_units'           => ['required', 'numeric', 'min:0', 'max:50'],
             'lab_units'           => ['required', 'integer', 'min:0', 'max:20'],
-            'nstp_lec_units'      => ['nullable', 'integer', 'min:0', 'max:10'],
+            'nstp_lec_units'      => ['nullable', 'numeric', 'min:0', 'max:10'],
             'discount_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
         $validated['lec_units']           = (int) $validated['lec_units'];
         $validated['lab_units']           = (int) $validated['lab_units'];
-        $validated['nstp_lec_units']      = (int) ($validated['nstp_lec_units'] ?? 0);
+        $validated['nstp_lec_units']      = (float) ($validated['nstp_lec_units'] ?? 0);
         $validated['discount_percentage'] = (float) ($validated['discount_percentage'] ?? 0.0);
 
         $assessment = StudentAssessment::where('user_id', $userId)

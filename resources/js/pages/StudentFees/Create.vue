@@ -57,8 +57,8 @@ const { formatCurrency } = useDataFormatting()
 // ─── Breadcrumbs ─────────────────────────────────────────────────────────────
 
 const breadcrumbs = [
-  { title: 'Dashboard',     href: route('accounting.dashboard') },
-  { title: 'Student Fees',  href: route('student-fees.index') },
+  { title: 'Dashboard',      href: route('accounting.dashboard') },
+  { title: 'Student Fees',   href: route('student-fees.index') },
   { title: 'New Assessment', href: route('student-fees.create') },
 ]
 
@@ -100,7 +100,7 @@ function clearStudent() {
   selectedStudent.value    = null
   form.user_id             = 0
   form.lec_units           = 0
-  form.lab_subjects        = 0
+  form.lab_units           = 0   // ← was form.lab_subjects
   curriculumSubjects.value = []
   curriculumMessage.value  = ''
   hasNstp.value            = false
@@ -144,7 +144,7 @@ async function loadCurriculum() {
     if (data.found) {
       curriculumSubjects.value = data.subjects
       form.lec_units    = data.billable_lec_units
-      form.lab_subjects = data.lab_subject_count
+      form.lab_units    = data.lab_subject_count   // ← was form.lab_subjects
       hasNstp.value     = data.has_nstp ?? false
       nstpLecUnits.value = data.nstp_lec_units ?? 0
     } else {
@@ -164,7 +164,7 @@ const form = useForm({
   semester:            '1st' as '1st' | '2nd' | 'Summer',
   school_year:         '',
   lec_units:           0,
-  lab_subjects:        0,
+  lab_units:           0,   // ← was lab_subjects; matches controller validation key
   nstp_lec_units:      0,
   discount_percentage: 0 as number,
 })
@@ -184,8 +184,8 @@ const rate = computed(() => props.feeRates.tuition_per_unit)
 
 const rawBillableTuition = computed(() => Number(form.lec_units) * rate.value)
 const nstpTuition        = computed(() => nstpLecUnits.value * rate.value)
-const entrepreneurFee    = computed(() => Number(form.lab_subjects) > 0 ? (props.feeRates.entrepreneurship_fee ?? 600) : 0)
-const baseLabFee         = computed(() => Number(form.lab_subjects) * props.feeRates.lab_fee_per_subject)
+const entrepreneurFee    = computed(() => Number(form.lab_units) > 0 ? (props.feeRates.entrepreneurship_fee ?? 600) : 0)
+const baseLabFee         = computed(() => Number(form.lab_units) * props.feeRates.lab_fee_per_subject)
 const miscFee            = computed(() => props.feeRates.misc_total)
 
 const discountSaving = computed(() => {
@@ -213,7 +213,15 @@ function submit() {
   if (! selectedStudent.value) return
   form.user_id        = selectedStudent.value.id
   form.nstp_lec_units = nstpLecUnits.value
-  form.post(route('student-fees.store'))
+
+  const url = route('student-fees.store')
+  console.log('[submit] posting to:', url, form.data())
+
+  form.post(url, {
+    onError:  (errors)   => console.error('[submit] validation errors:', errors),
+    onSuccess: ()        => console.log('[submit] success'),
+    onFinish: ()         => console.log('[submit] finished'),
+  })
 }
 </script>
 
@@ -327,7 +335,7 @@ function submit() {
               Loading curriculum…
             </div>
 
-            <!-- Success — Curriculum Table showing units only (no Code / Subject columns) -->
+            <!-- Success — Curriculum Table -->
             <Card v-else-if="curriculumSubjects.length > 0" class="border-green-200">
               <CardHeader class="pb-2">
                 <CardTitle class="text-sm flex items-center gap-2 text-green-800">
@@ -365,7 +373,7 @@ function submit() {
                   <CheckCircle2 class="h-3.5 w-3.5 text-green-500 shrink-0" />
                   {{ curriculumSubjects.filter(s => s.is_billable).length }} billable subject{{ curriculumSubjects.filter(s => s.is_billable).length !== 1 ? 's' : '' }}
                   · {{ form.lec_units }} LEC unit{{ form.lec_units !== 1 ? 's' : '' }}
-                  · {{ form.lab_subjects }} with lab
+                  · {{ form.lab_units }} with lab
                   — <span class="italic">override in Units Enrolled below if needed</span>
                 </p>
               </CardContent>
@@ -413,15 +421,15 @@ function submit() {
                 <p v-if="form.errors.lec_units" class="text-sm text-destructive">{{ form.errors.lec_units }}</p>
               </div>
               <div class="space-y-1.5">
-                <Label for="lab_subjects" class="flex items-center gap-1.5">
+                <Label for="lab_units" class="flex items-center gap-1.5">
                   <span class="w-2 h-2 rounded-full bg-orange-500 inline-block"></span>
                   Lab Subjects
                   <span class="text-xs text-muted-foreground">(subjects with lab)</span>
                 </Label>
-                <Input id="lab_subjects" type="number" v-model.number="form.lab_subjects"
+                <Input id="lab_units" type="number" v-model.number="form.lab_units"
                   min="0" max="20" class="text-center text-lg font-semibold" />
                 <p class="text-xs text-muted-foreground text-center">× {{ formatCurrency(feeRates.lab_fee_per_subject) }} / subject</p>
-                <p v-if="form.errors.lab_subjects" class="text-sm text-destructive">{{ form.errors.lab_subjects }}</p>
+                <p v-if="form.errors.lab_units" class="text-sm text-destructive">{{ form.errors.lab_units }}</p>
               </div>
             </CardContent>
             <div class="px-6 pb-4">
@@ -536,7 +544,7 @@ function submit() {
                 </template>
 
                 <div class="flex justify-between text-green-900 pt-1">
-                  <span>Lab Fee ({{ form.lab_subjects }} subjects)</span>
+                  <span>Lab Fee ({{ form.lab_units }} subjects)</span>
                   <span class="font-semibold">{{ formatCurrency(labFee) }}</span>
                 </div>
                 <div v-if="entrepreneurFee > 0" class="flex justify-between text-green-900">
@@ -559,13 +567,16 @@ function submit() {
           <!-- Submit -->
           <div class="flex gap-3 justify-end">
             <Button variant="outline" @click="router.visit(route('student-fees.index'))">Cancel</Button>
-            <Button
+            <button
+              type="button"
               :disabled="form.processing || !selectedStudent || totalAssessment === 0"
-              @click="submit"
+              class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition-all hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
+              @click.prevent="submit"
             >
-              <CheckCircle2 class="mr-2 h-4 w-4" />
+              <Loader2 v-if="form.processing" class="h-4 w-4 animate-spin" />
+              <CheckCircle2 v-else class="h-4 w-4" />
               {{ form.processing ? 'Saving…' : 'Create Assessment' }}
-            </Button>
+            </button>
           </div>
 
         </div>
@@ -597,7 +608,7 @@ function submit() {
                 </div>
                 <div class="flex justify-between">
                   <span class="text-muted-foreground">
-                    Lab Fee ({{ form.lab_subjects }} subj × {{ formatCurrency(feeRates.lab_fee_per_subject) }})
+                    Lab Fee ({{ form.lab_units }} subj × {{ formatCurrency(feeRates.lab_fee_per_subject) }})
                   </span>
                   <span class="font-medium">{{ formatCurrency(labFee) }}</span>
                 </div>
