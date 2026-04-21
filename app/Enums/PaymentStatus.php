@@ -26,6 +26,9 @@ enum PaymentStatus: string
 {
     // ── Transaction / StudentPaymentTerm statuses ─────────────────────────────
 
+    /** Bank transfer submitted — waiting for student to upload proof. */
+    case AWAITING_PROOF = 'awaiting_proof';
+
     /** Payment submitted and fully confirmed. Term balance has been deducted. */
     case PAID = 'paid';
 

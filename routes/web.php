@@ -31,10 +31,9 @@ Route::get('/', function () {
 
 Route::post('/webhook/paymongo', [PaymongoWebhookController::class, 'handle']);
 
-Route::middleware(['auth'])->group(function () {
-    Route::get('/payment/success', [PaymentController::class, 'success'])->name('payment.success');
-    Route::get('/payment/cancel',  [PaymentController::class, 'cancel'])->name('payment.cancel');
-});
+Route::get('/payment/success', [PaymentController::class, 'success'])->name('payment.success');
+Route::get('/payment/cancel',  [PaymentController::class, 'cancel'])->name('payment.cancel');
+
 
 // ============================================
 // AUTHENTICATED ROUTES

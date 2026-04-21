@@ -282,24 +282,81 @@ class PaymentController extends Controller
 
     public function success(Request $request)
     {
-        // FIX Bug #1: $sessionId was used before assignment — moved assignment here.
         $sessionId = $request->query('session_id');
 
-        Log::info('PayMongo success redirect received', ['session_id' => $sessionId]);
+        Log::info('PayMongo success redirect received', [
+            'session_id'  => $sessionId,
+            'auth_user'   => auth()->id(),
+            'referrer'    => $request->header('referer'),
+        ]);
 
         if (! $sessionId) {
             Log::warning('PayMongo success redirect missing session_id');
-            return redirect()->route('student.account')->with('flash.error', 'Payment session not found.');
+            return redirect()->route('student.account')
+                ->with('flash.error', 'Payment session not found. Please check your payment history or contact accounting.');
+        }
+
+        // Auth check — if unauthenticated, store session_id in the session and
+        // redirect to login. After login, the intended URL will include session_id.
+        if (! auth()->check()) {
+            Log::warning('PayMongo success: unauthenticated user, redirecting to login', [
+                'session_id' => $sessionId,
+            ]);
+            // Store the full return URL so after login it goes back here with query param
+            session()->put('url.intended', route('payment.success') . '?session_id=' . urlencode($sessionId));
+            return redirect()->route('login')
+                ->with('flash.info', 'Please log in to complete your payment confirmation.');
         }
 
         $payment = Payment::where('paymongo_source_id', $sessionId)->first();
 
         if (! $payment) {
-            Log::warning('PayMongo success: no local payment record for session', [
+            // The webhook may have already processed this and linked it differently.
+            // Try to find via the PayMongo API to get the real session ID.
+            Log::warning('PayMongo success: no local payment record for session_id', [
                 'session_id' => $sessionId,
+                'user_id'    => auth()->id(),
             ]);
+
+            // Attempt to verify via API — if payment is legit, create the record
+            $response = Http::withBasicAuth($this->secretKey, '')
+                ->get("{$this->baseUrl}/checkout_sessions/{$sessionId}");
+
+            if (! $response->ok()) {
+                Log::error('PayMongo success: API verification failed and no local record', [
+                    'session_id'  => $sessionId,
+                    'http_status' => $response->status(),
+                ]);
+                return redirect()->route('student.account')
+                    ->with('flash.error', 'Payment record not found. If you were charged, please contact the accounting office with session ID: ' . $sessionId);
+            }
+
+            $session             = $response->json('data');
+            $paymentIntentStatus = data_get($session, 'attributes.payment_intent.attributes.status');
+            $paymentIntentId     = data_get($session, 'attributes.payment_intent.id');
+
+            if ($paymentIntentStatus !== 'succeeded') {
+                return redirect()->route('student.account')
+                    ->with('flash.warning', 'Payment did not complete. No charges were made.');
+            }
+
+            // Check if webhook already created the transaction
+            $existingTxn = Transaction::where('reference', "PAY-{$paymentIntentId}")->first();
+            if ($existingTxn) {
+                return redirect()->route('student.account', ['tab' => 'history'])
+                    ->with('flash.info', 'Your payment has been received and is awaiting accounting review.');
+            }
+
+            // Payment succeeded on PayMongo but we have no local record — log critical
+            Log::critical('PayMongo success: payment succeeded but no local Payment row exists', [
+                'session_id'        => $sessionId,
+                'payment_intent_id' => $paymentIntentId,
+                'user_id'           => auth()->id(),
+                'amount'            => data_get($session, 'attributes.amount'),
+            ]);
+
             return redirect()->route('student.account')
-                ->with('flash.error', 'Payment record not found. Please contact the accounting office.');
+                ->with('flash.error', 'Payment received but could not be matched to your account. Please contact accounting with reference: ' . $paymentIntentId);
         }
 
         if ($payment->status === 'completed') {
