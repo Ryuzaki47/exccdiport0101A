@@ -173,20 +173,14 @@ class StudentFeeController extends Controller
             'school_year'         => ['required', 'string', 'max:20'],
             'lec_units'           => ['required', 'numeric', 'min:0', 'max:50'],
             'lab_units'           => ['required', 'integer', 'min:0', 'max:20'],
-            'discount_type'       => ['required', 'string', 'in:none,full,nstp,percentage'],
+            'nstp_lec_units'      => ['nullable', 'integer', 'min:0', 'max:10'],
             'discount_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
-            'is_taking_nstp'      => ['boolean'],
         ]);
 
         $validated['lec_units']           = (int) $validated['lec_units'];
         $validated['lab_units']           = (int) $validated['lab_units'];
-        $validated['is_taking_nstp']      = (bool) ($validated['is_taking_nstp'] ?? false);
+        $validated['nstp_lec_units']      = (int) ($validated['nstp_lec_units'] ?? 0);
         $validated['discount_percentage'] = (float) ($validated['discount_percentage'] ?? 0.0);
-
-        // Enforce: discount_percentage only makes sense when discount_type = 'percentage'
-        if ($validated['discount_type'] !== 'percentage') {
-            $validated['discount_percentage'] = 0.0;
-        }
 
         try {
             DB::transaction(function () use ($validated) {
@@ -213,14 +207,13 @@ class StudentFeeController extends Controller
                 // Load fee rates from fee_settings table (single source of truth)
                 $rates = AssessmentService::loadRates();
 
-                // Compute fees
+                // Compute fees — discount applies only to billable tuition, never NSTP portion
                 $fees = AssessmentService::compute(
-                    lecUnits:            $validated['lec_units'],
-                    labSubjects:         $validated['lab_units'],
-                    discountType:        $validated['discount_type'],
-                    isTakingNstp:        $validated['is_taking_nstp'],
-                    discountPercentage:  $validated['discount_percentage'],
-                    rates:               $rates,
+                    lecUnits:           $validated['lec_units'],
+                    labSubjects:        $validated['lab_units'],
+                    nstpLecUnits:       $validated['nstp_lec_units'],
+                    discountPercentage: $validated['discount_percentage'],
+                    rates:              $rates,
                 );
 
                 $student          = User::findOrFail($validated['user_id']);
@@ -235,9 +228,9 @@ class StudentFeeController extends Controller
                     'lec_units'           => $validated['lec_units'],
                     'lab_units'           => $validated['lab_units'],
                     'lab_subjects'        => $validated['lab_units'],
-                    'discount_type'       => $validated['discount_type'],
+                    'discount_type'       => $validated['discount_percentage'] > 0 ? 'percentage' : 'none',
                     'discount_percentage' => $validated['discount_percentage'],
-                    'is_taking_nstp'      => $validated['is_taking_nstp'],
+                    'is_taking_nstp'      => $validated['nstp_lec_units'] > 0,
                     'tuition_fee'         => $fees['tuition_fee'],
                     'lab_fee'             => $fees['lab_fee'],
                     'misc_fee'            => $fees['misc_fee'],
@@ -262,15 +255,18 @@ class StudentFeeController extends Controller
                     'year'            => now()->year,
                     'semester'        => $validated['semester'],
                     'meta'            => json_encode([
-                        'lec_units'        => $validated['lec_units'],
-                        'lab_units'        => $validated['lab_units'],
-                        'discount_type'    => $validated['discount_type'],
-                        'is_taking_nstp'   => $validated['is_taking_nstp'],
-                        'tuition_fee'      => $fees['tuition_fee'],
-                        'lab_fee'          => $fees['lab_fee'],
-                        'misc_fee'         => $fees['misc_fee'],
-                        'school_year'      => $validated['school_year'],
-                        'discount_applied' => $fees['discount_applied'],
+                        'lec_units'           => $validated['lec_units'],
+                        'lab_units'           => $validated['lab_units'],
+                        'nstp_lec_units'      => $validated['nstp_lec_units'],
+                        'discount_percentage' => $validated['discount_percentage'],
+                        'tuition_fee'         => $fees['tuition_fee'],
+                        'billable_tuition'    => $fees['billable_tuition'],
+                        'nstp_tuition'        => $fees['nstp_tuition'],
+                        'discount_saving'     => $fees['discount_saving'],
+                        'lab_fee'             => $fees['lab_fee'],
+                        'misc_fee'            => $fees['misc_fee'],
+                        'school_year'         => $validated['school_year'],
+                        'discount_applied'    => $fees['discount_applied'],
                     ]),
                 ]);
 
@@ -511,19 +507,14 @@ class StudentFeeController extends Controller
             'school_year'         => ['required', 'string', 'max:20'],
             'lec_units'           => ['required', 'numeric', 'min:0', 'max:50'],
             'lab_units'           => ['required', 'integer', 'min:0', 'max:20'],
-            'discount_type'       => ['required', 'string', 'in:none,full,nstp,percentage'],
+            'nstp_lec_units'      => ['nullable', 'integer', 'min:0', 'max:10'],
             'discount_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
-            'is_taking_nstp'      => ['boolean'],
         ]);
 
         $validated['lec_units']           = (int) $validated['lec_units'];
         $validated['lab_units']           = (int) $validated['lab_units'];
-        $validated['is_taking_nstp']      = (bool) ($validated['is_taking_nstp'] ?? false);
+        $validated['nstp_lec_units']      = (int) ($validated['nstp_lec_units'] ?? 0);
         $validated['discount_percentage'] = (float) ($validated['discount_percentage'] ?? 0.0);
-
-        if ($validated['discount_type'] !== 'percentage') {
-            $validated['discount_percentage'] = 0.0;
-        }
 
         $assessment = StudentAssessment::where('user_id', $userId)
             ->where('status', 'active')
@@ -542,8 +533,7 @@ class StudentFeeController extends Controller
             $fees = AssessmentService::compute(
                 lecUnits:           $validated['lec_units'],
                 labSubjects:        $validated['lab_units'],
-                discountType:       $validated['discount_type'],
-                isTakingNstp:       $validated['is_taking_nstp'],
+                nstpLecUnits:       $validated['nstp_lec_units'],
                 discountPercentage: $validated['discount_percentage'],
                 rates:              $rates,
             );
@@ -553,9 +543,9 @@ class StudentFeeController extends Controller
                 'school_year'         => $validated['school_year'],
                 'lec_units'           => $validated['lec_units'],
                 'lab_units'           => $validated['lab_units'],
-                'discount_type'       => $validated['discount_type'],
+                'discount_type'       => $validated['discount_percentage'] > 0 ? 'percentage' : 'none',
                 'discount_percentage' => $validated['discount_percentage'],
-                'is_taking_nstp'      => $validated['is_taking_nstp'],
+                'is_taking_nstp'      => $validated['nstp_lec_units'] > 0,
                 'tuition_fee'         => $fees['tuition_fee'],
                 'lab_fee'             => $fees['lab_fee'],
                 'misc_fee'            => $fees['misc_fee'],
@@ -576,14 +566,17 @@ class StudentFeeController extends Controller
                 ?->update([
                     'amount' => $fees['total'],
                     'meta'   => json_encode([
-                        'lec_units'        => $validated['lec_units'],
-                        'lab_units'        => $validated['lab_units'],
-                        'discount_type'    => $validated['discount_type'],
-                        'is_taking_nstp'   => $validated['is_taking_nstp'],
-                        'tuition_fee'      => $fees['tuition_fee'],
-                        'lab_fee'          => $fees['lab_fee'],
-                        'misc_fee'         => $fees['misc_fee'],
-                        'discount_applied' => $fees['discount_applied'],
+                        'lec_units'           => $validated['lec_units'],
+                        'lab_units'           => $validated['lab_units'],
+                        'nstp_lec_units'      => $validated['nstp_lec_units'],
+                        'discount_percentage' => $validated['discount_percentage'],
+                        'tuition_fee'         => $fees['tuition_fee'],
+                        'billable_tuition'    => $fees['billable_tuition'],
+                        'nstp_tuition'        => $fees['nstp_tuition'],
+                        'discount_saving'     => $fees['discount_saving'],
+                        'lab_fee'             => $fees['lab_fee'],
+                        'misc_fee'            => $fees['misc_fee'],
+                        'discount_applied'    => $fees['discount_applied'],
                     ]),
                 ]);
 
@@ -672,7 +665,8 @@ class StudentFeeController extends Controller
             'is_irregular'       => false,
             'billable_lec_units' => $curriculum['billable_lec_units'],
             'lab_subject_count'  => $curriculum['lab_subject_count'],
-            'nstp_units'         => $curriculum['nstp_units'],
+            'nstp_lec_units'     => $curriculum['nstp_lec_units'],
+            'has_nstp'           => $curriculum['has_nstp'],
             'pathfit_units'      => $curriculum['pathfit_units'],
             'subjects'           => $curriculum['subjects'],
             'course'             => $student->course,
