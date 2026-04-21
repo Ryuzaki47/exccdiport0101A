@@ -20,21 +20,8 @@ class ProcessPaymongoWebhook implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    /**
-     * Number of times the job may be attempted.
-     * Keep low — if the DB is healthy, 1 attempt is enough.
-     * 3 gives resilience against transient DB failures.
-     */
     public int $tries = 3;
-
-    /**
-     * Seconds to wait before retrying after failure.
-     */
     public int $backoff = 10;
-
-    /**
-     * Maximum seconds this job may run before timing out.
-     */
     public int $timeout = 60;
 
     public function __construct(
@@ -58,24 +45,74 @@ class ProcessPaymongoWebhook implements ShouldQueue
 
     private function handlePaymentPaid(): void
     {
-        $checkoutSession = data_get($this->payload, 'data.attributes.data');
+        // PayMongo webhook payload structure for checkout_session.payment.paid:
+        // {
+        //   data: {
+        //     type: "checkout_session.payment.paid",
+        //     attributes: {
+        //       data: {                              ← $checkoutSessionNode (full object)
+        //         id: "cs_xxx",
+        //         type: "checkout_session",
+        //         attributes: {                      ← $sessionAttrs
+        //           payment_intent: { id: "pi_xxx", attributes: { status: "succeeded" } },
+        //           payments: [{ attributes: { payment_intent_id: "pi_xxx" } }],
+        //           ...
+        //         }
+        //       }
+        //     }
+        //   }
+        // }
 
-        if (! $checkoutSession) {
-            Log::error('ProcessPaymongoWebhook: no checkout_session data found', [
+        $checkoutSessionNode = data_get($this->payload, 'data.attributes.data');
+
+        if (! $checkoutSessionNode) {
+            Log::error('ProcessPaymongoWebhook: no checkout_session data found in payload', [
                 'event_id'   => data_get($this->payload, 'data.id'),
                 'event_type' => $this->eventType,
+                'payload_keys' => array_keys($this->payload['data']['attributes'] ?? []),
             ]);
-            // Do NOT re-throw — this event is malformed and retrying won't fix it.
             return;
         }
 
-        $paymentIntentId = data_get($checkoutSession, 'payment_intent.id')
-            ?? data_get($checkoutSession, 'payments.0.attributes.payment_intent_id');
+        $sessionId    = data_get($checkoutSessionNode, 'id'); // "cs_xxx"
+        $sessionAttrs = data_get($checkoutSessionNode, 'attributes', []); // the attributes object
+
+        // ── EXTRACT payment_intent_id ─────────────────────────────────────────
+        // Primary:  attributes.payment_intent.id
+        // Fallback: attributes.payments[0].attributes.payment_intent_id
+        $paymentIntentId = data_get($sessionAttrs, 'payment_intent.id')
+            ?? data_get($sessionAttrs, 'payments.0.attributes.payment_intent_id');
 
         if (! $paymentIntentId) {
             Log::error('ProcessPaymongoWebhook: missing payment_intent_id', [
-                'event_id'   => data_get($this->payload, 'data.id'),
-                'session_id' => data_get($checkoutSession, 'id'),
+                'event_id'        => data_get($this->payload, 'data.id'),
+                'session_id'      => $sessionId,
+                'session_status'  => data_get($sessionAttrs, 'status'),
+                'has_pi'          => array_key_exists('payment_intent', $sessionAttrs),
+                'has_payments'    => array_key_exists('payments', $sessionAttrs),
+            ]);
+            return;
+        }
+
+        // ── EXTRACT payment status ────────────────────────────────────────────
+        // In test mode, payment_intent.attributes.status may be "processing" not "succeeded".
+        // But the individual payment inside payments[] has status = "paid" — trust that.
+        $intentStatus  = data_get($sessionAttrs, 'payment_intent.attributes.status');
+        $paymentStatus = data_get($sessionAttrs, 'payments.0.attributes.status');
+        $sessionStatus = data_get($sessionAttrs, 'status');
+
+        // Accept if: payment is "paid" OR intent is "succeeded" OR session is "paid"
+        // Test mode quirk: intent may stay "processing" while payment is "paid"
+        $isSuccessful = $paymentStatus === 'paid'
+            || $intentStatus === 'succeeded'
+            || $sessionStatus === 'paid';
+
+        if (! $isSuccessful) {
+            Log::warning('ProcessPaymongoWebhook: payment not in successful state, skipping', [
+                'session_id'     => $sessionId,
+                'intent_status'  => $intentStatus,
+                'payment_status' => $paymentStatus,
+                'session_status' => $sessionStatus,
             ]);
             return;
         }
@@ -92,19 +129,18 @@ class ProcessPaymongoWebhook implements ShouldQueue
         }
 
         // ── FIND LOCAL PAYMENT ROW ────────────────────────────────────────────
-        $payment = Payment::where('paymongo_source_id', data_get($checkoutSession, 'id'))
+        $payment = Payment::where('paymongo_source_id', $sessionId)
             ->orWhere(function ($q) use ($paymentIntentId) {
-                $q->whereJsonContains('meta->payment_intent_id', $paymentIntentId);
+                $q->whereJsonContains('meta->paymongo_intent_id', $paymentIntentId);
             })
             ->first();
 
         if (! $payment) {
             Log::warning('ProcessPaymongoWebhook: no Payment row found for session', [
                 'payment_intent_id' => $paymentIntentId,
-                'session_id'        => data_get($checkoutSession, 'id'),
+                'session_id'        => $sessionId,
                 'event_id'          => data_get($this->payload, 'data.id'),
             ]);
-            // Do NOT throw — retrying won't create the missing row.
             return;
         }
 
@@ -123,7 +159,7 @@ class ProcessPaymongoWebhook implements ShouldQueue
         $amount   = (float) $payment->amount;
 
         DB::transaction(function () use (
-            $payment, $user, $paymentIntentId, $termId, $termInfo, $amount, $checkoutSession
+            $payment, $user, $paymentIntentId, $sessionId, $termId, $termInfo, $amount
         ) {
             $payment->update([
                 'status'             => 'completed',
@@ -144,7 +180,7 @@ class ProcessPaymongoWebhook implements ShouldQueue
                 'semester'        => $termInfo?->assessment?->semester ?? null,
                 'meta'            => [
                     'description'         => $payment->meta['term_name'] ?? 'PayMongo Payment',
-                    'paymongo_session_id' => data_get($checkoutSession, 'id'),
+                    'paymongo_session_id' => $sessionId,
                     'paymongo_intent_id'  => $paymentIntentId,
                     'term_name'           => $payment->meta['term_name'] ?? 'Payment',
                     'selected_term_id'    => $termId,
@@ -155,8 +191,6 @@ class ProcessPaymongoWebhook implements ShouldQueue
                 ],
             ]);
 
-            // Start workflow INSIDE the transaction so if it fails,
-            // the transaction row is rolled back too (atomic pair).
             $this->startPaymentApprovalWorkflow($transaction->id, $user->id);
 
             Log::info('ProcessPaymongoWebhook: payment submitted for accounting review', [
@@ -171,22 +205,25 @@ class ProcessPaymongoWebhook implements ShouldQueue
 
     private function handlePaymentFailed(): void
     {
-        $checkoutSession = data_get($this->payload, 'data.attributes.data');
+        $checkoutSessionNode = data_get($this->payload, 'data.attributes.data');
 
-        if (! $checkoutSession) {
+        if (! $checkoutSessionNode) {
             Log::warning('ProcessPaymongoWebhook payment.failed: no checkout_session data');
             return;
         }
 
-        $paymentIntentId = data_get($checkoutSession, 'payment_intent.id')
-            ?? data_get($checkoutSession, 'payments.0.attributes.payment_intent_id');
+        $sessionId    = data_get($checkoutSessionNode, 'id');
+        $sessionAttrs = data_get($checkoutSessionNode, 'attributes', []);
+
+        $paymentIntentId = data_get($sessionAttrs, 'payment_intent.id')
+            ?? data_get($sessionAttrs, 'payments.0.attributes.payment_intent_id');
 
         if (! $paymentIntentId) {
             Log::warning('ProcessPaymongoWebhook payment.failed: missing payment_intent_id');
             return;
         }
 
-        $cancelled = Payment::where('paymongo_source_id', data_get($checkoutSession, 'id'))
+        $cancelled = Payment::where('paymongo_source_id', $sessionId)
             ->orWhere('paymongo_intent_id', $paymentIntentId)
             ->update(['status' => 'cancelled']);
 
@@ -225,9 +262,6 @@ class ProcessPaymongoWebhook implements ShouldQueue
         ]);
     }
 
-    /**
-     * Handle a job failure after all retries are exhausted.
-     */
     public function failed(\Throwable $e): void
     {
         Log::error('ProcessPaymongoWebhook job FAILED after all retries', [
