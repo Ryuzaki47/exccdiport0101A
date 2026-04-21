@@ -375,7 +375,9 @@ class PaymentController extends Controller
                 ->with('flash.error', 'Your session expired. Please log in and check your payment history.');
         }
 
-        DB::transaction(function () use ($payment, $user, $paymentIntentId, $sessionId) {
+        $transaction = null;
+
+        DB::transaction(function () use ($payment, $user, $paymentIntentId, $sessionId, &$transaction) {
             // Re-fetch payment inside transaction to avoid stale meta merge
             $payment = Payment::lockForUpdate()->find($payment->id);
 
@@ -418,9 +420,12 @@ class PaymentController extends Controller
                 'term_id'        => $termId,
                 'session_id'     => $sessionId,
             ]);
-
-            $this->startPaymentApprovalWorkflow($transaction->id, $user->id);
         });
+
+        // ✅ FIX: Workflow started AFTER transaction commits — failure here doesn't rollback payment record
+        if ($transaction) {
+            $this->startPaymentApprovalWorkflow($transaction->id, $user->id);
+        }
 
         return redirect()->route('student.account', ['tab' => 'history'])
             ->with('flash.success', 'Payment received! Your payment is now awaiting verification by accounting. You will be notified once it is approved.');
@@ -487,31 +492,33 @@ class PaymentController extends Controller
             'proof_of_payment' => 'required|file|mimes:pdf,jpg,jpeg,png,webp|max:5120',
         ]);
 
+        $file     = $validated['proof_of_payment'];
+        $filename = 'proof_' . $transaction->id . '_' . time() . '.' . $file->getClientOriginalExtension();
+        $filepath = $file->storeAs('payment_proofs', $filename, 'public');
+
+        $transaction->update([
+            'status' => PaymentStatus::AWAITING_APPROVAL->value,
+            'meta'   => array_merge($transaction->meta ?? [], [
+                'proof_of_payment'  => $filepath,
+                'proof_uploaded_at' => now()->toIso8601String(),
+            ]),
+        ]);
+
         try {
-            $file     = $validated['proof_of_payment'];
-            $filename = 'proof_' . $transaction->id . '_' . time() . '.' . $file->getClientOriginalExtension();
-            $filepath = $file->storeAs('payment_proofs', $filename, 'public');
-
-            $transaction->update([
-                'status' => PaymentStatus::AWAITING_APPROVAL->value,
-                'meta'   => array_merge($transaction->meta ?? [], [
-                    'proof_of_payment'  => $filepath,
-                    'proof_uploaded_at' => now()->toIso8601String(),
-                ]),
-            ]);
-
+            // ✅ FIX: Workflow started AFTER transaction update — failure here doesn't lose proof record
             $this->startPaymentApprovalWorkflow($transaction->id, $user->id);
 
             return redirect()->route('student.account', ['tab' => 'history'])
                 ->with('success', 'Proof of payment uploaded. Your payment is now awaiting verification.');
 
         } catch (\Exception $e) {
-            Log::error('Proof upload failed', [
+            Log::error('Proof upload workflow failed (but proof saved)', [
                 'transaction_id' => $transaction->id,
                 'error'          => $e->getMessage(),
             ]);
 
-            return back()->withErrors(['proof_of_payment' => 'Failed to upload proof. Please try again.']);
+            return redirect()->route('student.account', ['tab' => 'history'])
+                ->with('info', 'Proof uploaded. Workflow setup had an issue, but accounting will review your payment.');
         }
     }
 
@@ -522,10 +529,14 @@ class PaymentController extends Controller
             ->first();
 
         if (! $workflow) {
-            throw new \Exception(
-                'No active payment_approval workflow found. ' .
-                'Please run: php artisan db:seed --class=PaymentApprovalWorkflowSeeder'
-            );
+            // ✅ FIX: Log the error but DO NOT throw — this must not rollback the payment transaction.
+            // The payment is real money already charged. The transaction record must survive.
+            Log::critical('No active payment_approval workflow found. Transaction recorded but workflow NOT started.', [
+                'transaction_id' => $transactionId,
+                'user_id'        => $userId,
+                'action_required' => 'Run: php artisan db:seed --class=PaymentApprovalWorkflowSeeder',
+            ]);
+            return; // ← do not throw
         }
 
         $transaction = Transaction::findOrFail($transactionId);
