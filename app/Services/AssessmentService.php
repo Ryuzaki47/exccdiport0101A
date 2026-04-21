@@ -13,7 +13,7 @@ use App\Models\Subject;
  *
  * ── BILLING RULES ─────────────────────────────────────────────────────────────
  *   Tuition   = billable_lec_units × tuition_per_unit
- *               + nstp_lec_units   × tuition_per_unit  (always full price)
+ *               + 1.5 (NSTP fixed billing units) × tuition_per_unit  ← always 1.5
  *   Lab Fee   = (count of subjects with lab_units > 0) × lab_fee_per_subject
  *               + ₱600 entrepreneurship_fee (flat, once, if any lab subjects)
  *   Misc Fee  = ₱4,700 fixed
@@ -22,6 +22,9 @@ use App\Models\Subject;
  * ── NSTP / PATHFIT CHED EXCLUSION RULES ──────────────────────────────────────
  *   NSTP subjects:
  *     - Excluded from BILLABLE lec_units (tracked separately as nstp_lec_units)
+ *     - NSTP tuition is ALWAYS billed at exactly 1.5 units (per admin instruction)
+ *       regardless of how many units are listed in the curriculum.
+ *       e.g. even if curriculum says "NSTP = 3 units", billing is 1.5 × ₱364 = ₱546
  *     - NSTP tuition is billed at FULL PRICE regardless of any discount
  *     - Discount percentage NEVER applies to the NSTP portion
  *   PATHFIT / PE subjects:
@@ -39,17 +42,24 @@ use App\Models\Subject;
  *     lab_fee             = unchanged  (never discounted)
  *     misc_fee            = unchanged  (never discounted)
  *
- *   Example — student with 18 billable lec units + 3 NSTP units, 25% discount:
- *     billable_tuition    = 18 × ₱364 = ₱6,552
- *     nstp_tuition        = 3  × ₱364 = ₱1,092  ← full price always
- *     discounted_billable = ₱6,552 × 0.75 = ₱4,914
- *     final_tuition       = ₱4,914 + ₱1,092 = ₱6,006
+ *   Example — BSCS 1st Year 1st Sem (17 billable lec + NSTP, 0% discount):
+ *     billable_tuition    = 17 × ₱364 = ₱6,188
+ *     nstp_tuition        = 1.5 × ₱364 = ₱546  ← always 1.5, not 3
+ *     final_tuition       = ₱6,188 + ₱546 = ₱6,734
+ *     lab_fee             = 3 × ₱1,656 = ₱4,968
+ *     entrep_fee          = ₱600
+ *     misc_fee            = ₱4,700
+ *     total               = ₱17,002
  */
 class AssessmentService
 {
     // ─── Constants ────────────────────────────────────────────────────────────
 
-    /** NSTP minimum tuition per CHED: 1.5 units × rate (kept for legacy compat) */
+    /**
+     * NSTP billing units — ALWAYS 1.5 regardless of curriculum unit count.
+     * Per admin instruction: even if curriculum lists NSTP as 3 units,
+     * billing is fixed at 1.5 units × tuition rate.
+     */
     const NSTP_MINIMUM_UNITS = 1.5;
 
     // ─── Fee Rates ────────────────────────────────────────────────────────────
@@ -125,15 +135,14 @@ class AssessmentService
     /**
      * Get curriculum subjects for a regular student and compute billable units.
      *
-     * Returns has_nstp = true when the curriculum includes NSTP subjects.
-     * The caller (Vue form) should display a notice when has_nstp is true,
-     * informing accounting that the NSTP tuition portion will NOT be discounted
-     * regardless of the discount percentage entered.
+     * IMPORTANT: nstp_lec_units returned here is ALWAYS 1.5 (NSTP_MINIMUM_UNITS)
+     * when the student has NSTP, regardless of the curriculum unit count.
+     * This is per admin instruction — billing is fixed at 1.5 units.
      *
      * @return array{
      *   subjects: array,
      *   billable_lec_units: int,
-     *   nstp_lec_units: int,
+     *   nstp_lec_units: float,
      *   has_nstp: bool,
      *   lab_subject_count: int,
      *   pathfit_units: int,
@@ -150,19 +159,19 @@ class AssessmentService
             ->where('is_active', true)
             ->get();
 
-        $billableLecUnits = 0;
-        $nstpLecUnits     = 0;
-        $labSubjectCount  = 0;
-        $pathfitUnits     = 0;
-        $subjectList      = [];
+        $billableLecUnits  = 0;
+        $hasNstp           = false;
+        $labSubjectCount   = 0;
+        $pathfitUnits      = 0;
+        $subjectList       = [];
 
         foreach ($subjects as $subj) {
             $isNstp    = self::isNstpSubject($subj->code, $subj->name);
             $isPathfit = self::isPathfitSubject($subj->code, $subj->name);
 
             if ($isNstp) {
-                // NSTP: tracked separately, billed at full price, excluded from discount
-                $nstpLecUnits += (int) ($subj->lec_units ?? 0);
+                // NSTP: mark presence only — billing is always 1.5 units flat
+                $hasNstp = true;
             } elseif ($isPathfit) {
                 // PATHFIT/PE: excluded from billing entirely (CHED non-tuition)
                 $pathfitUnits += (int) ($subj->lec_units ?? 0);
@@ -187,14 +196,17 @@ class AssessmentService
             ];
         }
 
+        // NSTP billing is ALWAYS 1.5 units — never the curriculum unit count
+        $nstpBillingUnits = $hasNstp ? self::NSTP_MINIMUM_UNITS : 0;
+
         return [
             'subjects'           => $subjectList,
             'billable_lec_units' => $billableLecUnits,
-            'nstp_lec_units'     => $nstpLecUnits,
-            'has_nstp'           => $nstpLecUnits > 0,
+            'nstp_lec_units'     => $nstpBillingUnits, // always 1.5 when NSTP is present
+            'has_nstp'           => $hasNstp,
             'lab_subject_count'  => $labSubjectCount,
             'pathfit_units'      => $pathfitUnits,
-            'total_units'        => $billableLecUnits + $nstpLecUnits + $pathfitUnits,
+            'total_units'        => $billableLecUnits + (int) $nstpBillingUnits + $pathfitUnits,
         ];
     }
 
@@ -203,6 +215,10 @@ class AssessmentService
     /**
      * Compute the full assessment fee breakdown.
      *
+     * NSTP RULE: $nstpLecUnits is clamped to NSTP_MINIMUM_UNITS (1.5) whenever
+     * it is > 0. This enforces the admin instruction that NSTP is ALWAYS billed
+     * at exactly 1.5 units regardless of the curriculum value passed in.
+     *
      * DISCOUNT RULE:
      *   discount_percentage applies ONLY to billable (non-NSTP) tuition.
      *   NSTP tuition is always billed at full price.
@@ -210,7 +226,7 @@ class AssessmentService
      *
      * @param  int        $lecUnits            Billable lecture units (NSTP/PATHFIT excluded)
      * @param  int        $labSubjects          Number of subjects with lab_units > 0
-     * @param  int        $nstpLecUnits         NSTP lecture units (billed full, never discounted)
+     * @param  float      $nstpLecUnits         NSTP units from curriculum (will be clamped to 1.5)
      * @param  float      $discountPercentage   0–100. 0 means no discount.
      * @param  array|null $rates                Output of loadRates(). Loaded fresh if null.
      * @return array{
@@ -229,11 +245,20 @@ class AssessmentService
     public static function compute(
         int    $lecUnits,
         int    $labSubjects,
-        int    $nstpLecUnits       = 0,
+        float  $nstpLecUnits       = 0,
         float  $discountPercentage = 0.0,
         ?array $rates              = null
     ): array {
         $rates ??= self::loadRates();
+
+        // ── NSTP BILLING RULE ──────────────────────────────────────────────────
+        // NSTP is ALWAYS billed at exactly 1.5 units per admin instruction.
+        // The curriculum may list NSTP as 3 units, but billing is fixed at 1.5.
+        // This applies to ALL programs and ALL year levels.
+        if ($nstpLecUnits > 0) {
+            $nstpLecUnits = self::NSTP_MINIMUM_UNITS; // enforce 1.5
+        }
+        // ───────────────────────────────────────────────────────────────────────
 
         $tuitionPerUnit   = $rates['tuition_per_unit'];
         $labFeePerSubject = $rates['lab_fee_per_subject'];
@@ -245,7 +270,7 @@ class AssessmentService
 
         // Compute tuition components
         $rawBillableTuition = round($lecUnits * $tuitionPerUnit, 2);
-        $nstpTuition        = round($nstpLecUnits * $tuitionPerUnit, 2); // always full price
+        $nstpTuition        = round($nstpLecUnits * $tuitionPerUnit, 2); // always 1.5 × rate
 
         // Apply discount ONLY to billable (non-NSTP) tuition
         if ($discountPercentage > 0 && $discountPercentage <= 100) {
@@ -288,8 +313,9 @@ class AssessmentService
         float  $discountPercentage = 0.0,
         ?array $rates              = null
     ): array {
-        $rates          ??= self::loadRates();
-        $nstpLecUnits    = $isTakingNstp ? (int) round(self::NSTP_MINIMUM_UNITS) : 0;
+        $rates        ??= self::loadRates();
+        // When using the legacy flag, pass 1 so compute() clamps it to 1.5
+        $nstpLecUnits   = $isTakingNstp ? 1 : 0;
 
         return self::compute($lecUnits, $labSubjects, $nstpLecUnits, $discountPercentage, $rates);
     }
@@ -325,7 +351,7 @@ class AssessmentService
 
     /**
      * NSTP subjects: excluded from billable lec_units AND from discount.
-     * Their tuition is always charged at full price.
+     * Their tuition is always charged at full price (fixed at 1.5 units).
      */
     public static function isNstpSubject(string $code, string $name): bool
     {

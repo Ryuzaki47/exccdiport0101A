@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDataFormatting } from '@/composables/useDataFormatting'
 import {
   Search, User, BookOpen, Calculator,
-  CheckCircle2, Loader2, AlertTriangle, Info, BookMarked,
+  CheckCircle2, Loader2, AlertTriangle, Info,
 } from 'lucide-vue-next'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -219,11 +219,6 @@ const paymentTermBreakdown = computed(() =>
   }))
 )
 
-// Curriculum summary helpers
-const billableSubjects = computed(() => curriculumSubjects.value.filter(s => s.is_billable))
-const nstpSubjects     = computed(() => curriculumSubjects.value.filter(s => s.is_nstp))
-const pathfitSubjects  = computed(() => curriculumSubjects.value.filter(s => s.is_pathfit))
-
 // ─── Submit ───────────────────────────────────────────────────────────────────
 
 function submit() {
@@ -335,73 +330,28 @@ function submit() {
             </CardContent>
           </Card>
 
-          <!-- Curriculum (Regular Students) -->
-          <Card v-if="selectedStudent && !selectedStudent.is_irregular">
-            <CardHeader>
-              <CardTitle class="flex items-center gap-2 text-base">
-                <BookMarked class="h-4 w-4 text-green-600" />
-                Curriculum — {{ selectedStudent.course }}, {{ selectedStudent.year_level }}
-                <Loader2 v-if="curriculumLoading" class="h-4 w-4 animate-spin text-muted-foreground" />
-              </CardTitle>
-            </CardHeader>
-            <CardContent class="space-y-3">
-              <div v-if="curriculumMessage && !curriculumLoading"
-                class="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
-                <AlertTriangle class="h-4 w-4 mt-0.5 shrink-0" />
-                {{ curriculumMessage }}
-              </div>
-
-              <div v-if="curriculumSubjects.length > 0 && !curriculumLoading">
-                <div class="rounded-md border overflow-hidden">
-                  <table class="w-full text-xs">
-                    <thead class="bg-muted text-muted-foreground">
-                      <tr>
-                        <th class="text-left px-3 py-2">Code</th>
-                        <th class="text-left px-3 py-2">Subject</th>
-                        <th class="text-center px-3 py-2">LEC</th>
-                        <th class="text-center px-3 py-2">LAB</th>
-                        <th class="text-center px-3 py-2">Billable</th>
-                      </tr>
-                    </thead>
-                    <tbody class="divide-y divide-border">
-                      <tr v-for="s in curriculumSubjects" :key="s.id"
-                        :class="[
-                          s.is_nstp    ? 'bg-amber-50 text-amber-800' :
-                          s.is_pathfit ? 'bg-purple-50 text-purple-800' :
-                          'hover:bg-muted/50'
-                        ]">
-                        <td class="px-3 py-2 font-mono">{{ s.code }}</td>
-                        <td class="px-3 py-2">
-                          {{ s.name }}
-                          <span v-if="s.is_nstp"    class="ml-1 text-xs bg-amber-200 text-amber-800 px-1 rounded">NSTP</span>
-                          <span v-if="s.is_pathfit" class="ml-1 text-xs bg-purple-200 text-purple-800 px-1 rounded">PATHFIT/PE</span>
-                        </td>
-                        <td class="text-center px-3 py-2">{{ s.lec_units }}</td>
-                        <td class="text-center px-3 py-2">{{ s.lab_units }}</td>
-                        <td class="text-center px-3 py-2">
-                          <span v-if="s.is_billable" class="text-green-600 font-medium">✓</span>
-                          <span v-else class="text-muted-foreground">—</span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div class="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                  <span class="text-green-700">
-                    ✓ {{ billableSubjects.length }} billable subjects
-                    · {{ form.lec_units }} LEC units
-                    · {{ form.lab_subjects }} with lab
-                  </span>
-                  <span v-if="nstpSubjects.length > 0" class="text-amber-700">
-                    ⚠ {{ nstpSubjects.length }} NSTP (excluded from discount — billed at full price)
-                  </span>
-                  <span v-if="pathfitSubjects.length > 0" class="text-purple-700">
-                    ⚠ {{ pathfitSubjects.length }} PATHFIT/PE (excluded from billing per CHED)
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <!-- Curriculum Auto-Fill Banner (Regular Students) -->
+          <div v-if="selectedStudent && !selectedStudent.is_irregular" class="space-y-2">
+            <!-- Loading -->
+            <div v-if="curriculumLoading"
+              class="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+              <Loader2 class="h-4 w-4 animate-spin shrink-0" />
+              Loading curriculum…
+            </div>
+            <!-- Success -->
+            <div v-else-if="curriculumSubjects.length > 0"
+              class="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+              <CheckCircle2 class="h-4 w-4 shrink-0 text-green-600" />
+              Units auto-filled from curriculum — {{ form.lec_units }} LEC unit{{ form.lec_units !== 1 ? 's' : '' }}, {{ form.lab_subjects }} lab subject{{ form.lab_subjects !== 1 ? 's' : '' }}.
+              You can override below if needed.
+            </div>
+            <!-- Warning / not found -->
+            <div v-else-if="curriculumMessage"
+              class="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <AlertTriangle class="h-4 w-4 mt-0.5 shrink-0" />
+              {{ curriculumMessage }}
+            </div>
+          </div>
 
           <!-- Irregular student notice -->
           <div v-if="selectedStudent?.is_irregular"

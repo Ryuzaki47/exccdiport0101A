@@ -106,7 +106,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'ECE-PHYS101',  'name'=>'Physics for Engineering Technologists',      'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'ECE-COMP101',  'name'=>'Integrated Software Applications',           'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'ECE-PATHFIT1', 'name'=>'Movement Competency Training',               'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
-            ['code'=>'ECE-NSTP1',    'name'=>'National Service Training Program 1',        'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
+            ['code'=>'ECE-NSTP1',    'name'=>'National Service Training Program 1',        'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
 
             // ── 1st Year — 2nd Semester ──────────────────────────────────────
             ['code'=>'ECE-GEELEC2',  'name'=>'Peace Studies and Education',                 'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
@@ -117,7 +117,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'ECE-COMP102',  'name'=>'Integrated Software Applications 2',         'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'ECE-CAD1',     'name'=>'Computer-Aided Drafting',                    'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'ECE-PATHFIT2', 'name'=>'Exercise-based Fitness Activities',          'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
-            ['code'=>'ECE-NSTP2',    'name'=>'National Service Training Program 2',        'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
+            ['code'=>'ECE-NSTP2',    'name'=>'National Service Training Program 2',        'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
 
             // ── 2nd Year — 1st Semester ──────────────────────────────────────
             ['code'=>'ECE-GE4',      'name'=>'The Contemporary World',                     'lec_units'=>3,'lab_units'=>0,'year_level'=>'2nd Year','semester'=>'1st Sem','course'=>$c],
@@ -188,7 +188,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'EET-ELXT110',  'name'=>'Basic Electricity and Electronics',         'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'EET-COMP101',  'name'=>'Integrated Software Applications',          'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'EET-PATHFIT1', 'name'=>'Movement Competency Training',              'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
-            ['code'=>'EET-NSTP1',    'name'=>'National Service Training Program 1',       'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
+            ['code'=>'EET-NSTP1',    'name'=>'National Service Training Program 1',       'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
 
             // ── 1st Year — 2nd Semester ──────────────────────────────────────
             ['code'=>'EET-GE3',      'name'=>'Science, Technology & Society',             'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
@@ -196,7 +196,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'EET-EE101',    'name'=>'DC and AC Circuits',                        'lec_units'=>3,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'EET-COMP102',  'name'=>'Integrated Software Applications 2',        'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'EET-PATHFIT2', 'name'=>'Exercise-based Fitness Activities',         'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
-            ['code'=>'EET-NSTP2',    'name'=>'National Service Training Program 2',       'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
+            ['code'=>'EET-NSTP2',    'name'=>'National Service Training Program 2',       'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
 
             // ── 2nd Year — 1st Semester ──────────────────────────────────────
             ['code'=>'EET-GE5',      'name'=>'Readings in the Philippine History',        'lec_units'=>3,'lab_units'=>0,'year_level'=>'2nd Year','semester'=>'1st Sem','course'=>$c],
@@ -272,7 +272,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'ACT-ITC103',   'name'=>'Computer Programming 1',                   'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'ACT-ELEC1',    'name'=>'Fundamentals to Computer Systems Servicing','lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'ACT-PATHFIT1', 'name'=>'Movement Competency Training',              'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
-            ['code'=>'ACT-NSTP1',    'name'=>'National Service Training Program 1',       'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
+            ['code'=>'ACT-NSTP1',    'name'=>'National Service Training Program 1',       'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
 
             // ── 1st Year — 2nd Semester ──────────────────────────────────────
             ['code'=>'ACT-GEELEC2',  'name'=>'Peace Studies and Education',               'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
@@ -283,7 +283,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'ACT-ITC106',   'name'=>'Information Management',                   'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'ACT-ELEC2',    'name'=>'Data Communication and Networking 1',      'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'ACT-PATHFIT2', 'name'=>'Exercise-based Fitness Activities',        'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
-            ['code'=>'ACT-NSTP2',    'name'=>'National Service Training Program 2',      'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
+            ['code'=>'ACT-NSTP2',    'name'=>'National Service Training Program 2',      'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
 
             // ── 2nd Year — 1st Semester ──────────────────────────────────────
             ['code'=>'ACT-ETHICS',   'name'=>'Ethics',                                   'lec_units'=>3,'lab_units'=>0,'year_level'=>'2nd Year','semester'=>'1st Sem','course'=>$c],
@@ -324,7 +324,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'CS-CSC101',    'name'=>'Computer Programming 1',                   'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'CS-CSP103',    'name'=>'IT Software Solutions for Business',       'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'CS-PATHFIT1',  'name'=>'Movement Competency Training',             'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
-            ['code'=>'CS-NSTP1',     'name'=>'National Service Training Program 1',      'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
+            ['code'=>'CS-NSTP1',     'name'=>'National Service Training Program 1',      'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
 
             // ── 1st Year — 2nd Semester ──────────────────────────────────────
             ['code'=>'CS-GEELEC2',   'name'=>'Peace Studies and Education',               'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
@@ -334,7 +334,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'CS-CSP107',    'name'=>'Application Development and Emerging Technologies','lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'CS-MATH2',     'name'=>'Mathematics in the Modern World 2',        'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'CS-PATHFIT2',  'name'=>'Exercise-based Fitness Activities',        'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
-            ['code'=>'CS-NSTP2',     'name'=>'National Service Training Program 2',      'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
+            ['code'=>'CS-NSTP2',     'name'=>'National Service Training Program 2',      'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
 
             // ── 2nd Year — 1st Semester ──────────────────────────────────────
             ['code'=>'CS-ETHICS',    'name'=>'Ethics',                                   'lec_units'=>3,'lab_units'=>0,'year_level'=>'2nd Year','semester'=>'1st Sem','course'=>$c],
@@ -401,12 +401,12 @@ class EnhancedSubjectSeeder extends Seeder
             // ── 1st Year — 1st Semester ──────────────────────────────────────
             ['code'=>'IT-ENG1',      'name'=>'Purposive Communication',                   'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'IT-GEELEC1',   'name'=>'Living in the IT Era',                      'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
-            ['code'=>'IT-MATH1',     'name'=>'Mathematics in the Modern World',           'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
+            ['code'=>'IT-MATH1',     'name'=>'Mathematics in the Modern World',           'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'IT-ITC101',    'name'=>'Introduction to Computing',                 'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'IT-ITC102',    'name'=>'IT Software Solutions for Business 1',     'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
-            ['code'=>'IT-ITC103',    'name'=>'Computer Programming 1',                   'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
+            ['code'=>'IT-ITC103',    'name'=>'Computer Programming 1',                   'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'IT-PATHFIT1',  'name'=>'Movement Competency Training',             'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
-            ['code'=>'IT-NSTP1',     'name'=>'National Service Training Program 1',      'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
+            ['code'=>'IT-NSTP1',     'name'=>'National Service Training Program 1',      'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
 
             // ── 1st Year — 2nd Semester ──────────────────────────────────────
             ['code'=>'IT-GEELEC2',   'name'=>'Peace Studies and Education',               'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
@@ -416,7 +416,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'IT-ITC106',    'name'=>'Information Management',                   'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'IT-ITP107',    'name'=>'Introduction to Human Computer Interaction','lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'IT-PATHFIT2',  'name'=>'Exercise-based Fitness Activities',        'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
-            ['code'=>'IT-NSTP2',     'name'=>'National Service Training Program 2',      'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
+            ['code'=>'IT-NSTP2',     'name'=>'National Service Training Program 2',      'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
 
             // ── 2nd Year — 1st Semester ──────────────────────────────────────
             ['code'=>'IT-HIST1',     'name'=>'Readings in the Philippine History',       'lec_units'=>3,'lab_units'=>0,'year_level'=>'2nd Year','semester'=>'1st Sem','course'=>$c],
@@ -483,7 +483,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'IS-ISC102',    'name'=>'Computer Programming 1',                   'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'IS-ISC103',    'name'=>'IT Software Solutions for Business',       'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
             ['code'=>'IS-PE1',       'name'=>'Physical Fitness and Gymnastics',          'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
-            ['code'=>'IS-NSTP1',     'name'=>'National Service Training Program 1',      'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
+            ['code'=>'IS-NSTP1',     'name'=>'National Service Training Program 1',      'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'1st Sem','course'=>$c],
 
             // ── 1st Year — 2nd Semester ──────────────────────────────────────
             ['code'=>'IS-GEELEC2',   'name'=>'Peace Studies and Education',               'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
@@ -493,7 +493,7 @@ class EnhancedSubjectSeeder extends Seeder
             ['code'=>'IS-ISC104',    'name'=>'Computer Programming 2',                   'lec_units'=>2,'lab_units'=>1,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'IS-ISP105',    'name'=>'Fundamentals of Information Systems',     'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
             ['code'=>'IS-PE2',       'name'=>'Individual and Team Sports',              'lec_units'=>2,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
-            ['code'=>'IS-NSTP2',     'name'=>'National Service Training Program 2',     'lec_units'=>3,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
+            ['code'=>'IS-NSTP2',     'name'=>'National Service Training Program 2',     'lec_units'=>1.5,'lab_units'=>0,'year_level'=>'1st Year','semester'=>'2nd Sem','course'=>$c],
 
             // ── 2nd Year — 1st Semester ──────────────────────────────────────
             ['code'=>'IS-ETHICS',    'name'=>'Ethics',                                   'lec_units'=>3,'lab_units'=>0,'year_level'=>'2nd Year','semester'=>'1st Sem','course'=>$c],
