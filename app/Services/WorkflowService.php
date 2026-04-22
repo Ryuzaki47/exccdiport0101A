@@ -34,14 +34,17 @@ class WorkflowService
             $metadata = [];
             if ($entity instanceof Transaction) {
                 $metadata = [
-                    'transaction_id'  => $entity->id,
-                    'amount'          => (float) $entity->amount,
-                    'payment_method'  => $entity->payment_channel,
-                    'term_name'       => $entity->meta['term_name'] ?? $entity->type,
-                    'year'            => $entity->year,
-                    'semester'        => $entity->semester,
-                    'student_user_id' => $entity->user_id,
-                    'submitted_at'    => now()->toIso8601String(),
+                    'transaction_id'      => $entity->id,
+                    'amount'              => (float) $entity->amount,
+                    'payment_method'      => $entity->payment_channel,
+                    'term_name'           => $entity->meta['term_name'] ?? $entity->type,
+                    'year'                => $entity->year,
+                    'semester'            => $entity->semester,
+                    'student_user_id'     => $entity->user_id,
+                    'submitted_at'        => now()->toIso8601String(),
+                    // ← DAGDAG ITO:
+                    'assessment_id'       => $entity->meta['assessment_id'] ?? null,
+                    'selected_term_id'    => $entity->meta['selected_term_id'] ?? null,
                 ];
             }
 

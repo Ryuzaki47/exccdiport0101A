@@ -46,10 +46,20 @@ interface UnpaidTerm {
     status: string;
 }
 
+interface Assessment {
+    id: number;
+    assessment_number: string;
+    school_year: string;
+    semester: string;
+    total_assessment: number;
+    status: string;
+}
+
 interface Props {
     approval: Approval;
     student?: Student | null;
     unpaidTerms?: UnpaidTerm[];
+    assessment?: Assessment | null;
 }
 
 const props = defineProps<Props>();
@@ -202,6 +212,19 @@ const refreshApproval = () => {
                                 approval.workflow_instance?.workflowable?.payment_channel ??
                                 '—'
                             }}
+                        </p>
+                    </div>
+                    
+                    <div>
+                        <p class="text-sm text-gray-500">Assessment No.</p>
+                        <p class="font-mono font-semibold">
+                            {{ assessment?.assessment_number ?? '—' }}
+                        </p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">School Year / Semester</p>
+                        <p class="font-semibold">
+                            {{ assessment ? `${assessment.school_year} · ${assessment.semester}` : '—' }}
                         </p>
                     </div>
                 </div>

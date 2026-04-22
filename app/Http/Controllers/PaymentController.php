@@ -134,7 +134,7 @@ class PaymentController extends Controller
 
         $user = $request->user();
 
-        // ── DUPLICATE CHECKOUT SESSION GUARD ──────────────────────────────────
+        // ── DUPLICATE CHECKOUT SESSION GUARD ─────────────────────────────────
         if ($validated['selected_term_id']) {
             $stalePending = Payment::where('user_id', $user->id)
                 ->where('status', 'pending')
@@ -145,7 +145,6 @@ class PaymentController extends Controller
                 ->first();
 
             if ($stalePending) {
-                // Try to verify via API, but don't block if API is unreachable
                 try {
                     $pmResponse = Http::withBasicAuth($this->secretKey, '')
                         ->timeout(8)
@@ -170,11 +169,9 @@ class PaymentController extends Controller
                             ], 422);
                         }
                     } else {
-                        // PayMongo unreachable — expire the stale row and allow new session
                         $stalePending->update(['status' => 'cancelled']);
                     }
                 } catch (\Throwable $e) {
-                    // API call failed — expire locally and allow new session
                     Log::warning('PayMongo API unreachable during stale session check', [
                         'error'          => $e->getMessage(),
                         'old_session_id' => $stalePending->paymongo_source_id,
@@ -194,6 +191,9 @@ class PaymentController extends Controller
             }
         }
 
+        // ── CREATE CHECKOUT SESSION ───────────────────────────────────────────
+        // Use static success/cancel URLs — session ID is stored in Payment record
+        // and looked up in success() via the user's latest pending payment.
         $response = Http::withBasicAuth($this->secretKey, '')
             ->timeout(20)
             ->post("{$this->baseUrl}/checkout_sessions", [
@@ -211,10 +211,10 @@ class PaymentController extends Controller
                             'quantity' => 1,
                         ]],
                         'payment_method_types' => $this->getPaymentMethodTypes(),
-                        'success_url' => url('/payment/success') . '?session_id={CHECKOUT_SESSION_ID}',
-                        'cancel_url'  => url('/payment/cancel')  . '?session_id={CHECKOUT_SESSION_ID}',
-                        'description' => $validated['description'],
-                        'send_email_receipt' => false,
+                        'success_url'          => url('/payment/success'),
+                        'cancel_url'           => url('/payment/cancel'),
+                        'description'          => $validated['description'],
+                        'send_email_receipt'   => false,
                     ],
                 ],
             ]);
@@ -231,6 +231,7 @@ class PaymentController extends Controller
         }
 
         $session         = $response->json('data');
+        $sessionId       = $session['id'];
         $paymentIntentId = data_get($session, 'attributes.payment_intent.id');
 
         Payment::create([
@@ -240,13 +241,14 @@ class PaymentController extends Controller
             'description'           => $validated['description'],
             'payment_method'        => 'paymongo_checkout',
             'status'                => 'pending',
-            'paymongo_source_id'    => $session['id'],
+            'paymongo_source_id'    => $sessionId,
             'meta'                  => [
                 'payment_method'     => 'paymongo',
                 'selected_term_id'   => $validated['selected_term_id'],
                 'term_name'          => $termInfo?->term_name ?? 'Payment',
                 'paymongo_checkout'  => true,
                 'paymongo_intent_id' => $paymentIntentId,
+                'assessment_id'      => $termInfo?->student_assessment_id ?? null,
             ],
         ]);
 
@@ -254,23 +256,21 @@ class PaymentController extends Controller
             $termInfo->update(['payment_intent_id' => $paymentIntentId]);
         }
 
+        Log::info('PayMongo payment_intent_id stored for webhook linkage', [
+            'payment_term_id'  => $termInfo?->id,
+            'user_id'          => $user->id,
+            'payment_intent_id' => $paymentIntentId,
+            'session_id'       => $sessionId,
+        ]);
+
         return response()->json([
             'checkout_url' => data_get($session, 'attributes.checkout_url'),
+            'session_id'   => $sessionId,
         ]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  PAYMONGO — SUCCESS REDIRECT
-    //
-    //  DESIGN DECISION:
-    //  We do NOT call the PayMongo API here to verify the session.
-    //  Reason: Railway's container can intermittently fail to reach api.paymongo.com,
-    //  causing the verification to fail even for legitimate paid sessions.
-    //
-    //  Instead:
-    //  1. Trust the local Payment row created by createCheckout()
-    //  2. Trust the webhook (ProcessPaymongoWebhook job) for authoritative recording
-    //  3. This handler is UX-only — show appropriate feedback, let webhook do the work
     // ─────────────────────────────────────────────────────────────────────────
 
     public function success(Request $request)
@@ -282,26 +282,46 @@ class PaymentController extends Controller
             'auth_user'  => auth()->id(),
         ]);
 
-        // ── GUARD: missing or unsubstituted session ID ────────────────────────
-        if (! $sessionId || $sessionId === '{CHECKOUT_SESSION_ID}') {
-            Log::warning('PayMongo success: missing or unsubstituted session_id', [
-                'raw' => $sessionId,
-            ]);
-            return redirect()->route('student.account', ['tab' => 'history'])
-                ->with('flash.info', 'Your payment is being processed. Please check the Payment History tab in a few moments. If it doesn\'t appear after 10 minutes, contact accounting.');
-        }
-
-        // ── GUARD: unauthenticated ────────────────────────────────────────────
+        // ✅ FIXED: auth check FIRST before using $user anywhere
         if (! auth()->check()) {
             Log::warning('PayMongo success: unauthenticated, saving intended URL', [
                 'session_id' => $sessionId,
             ]);
-            session()->put('url.intended', route('payment.success') . '?session_id=' . urlencode($sessionId));
+            session()->put('url.intended', route('payment.success') . '?session_id=' . urlencode($sessionId ?? ''));
             return redirect()->route('login')
                 ->with('flash.info', 'Please log in to complete your payment confirmation.');
         }
 
-        $user    = auth()->user();
+        $user = auth()->user(); // ✅ FIXED: $user defined BEFORE it is used below
+
+        // ── GUARD: missing or unsubstituted session ID ────────────────────────
+        // PayMongo does not substitute {CHECKOUT_SESSION_ID} in checkout sessions
+        // (only in Payment Links). So we look up the latest pending payment instead.
+        if (! $sessionId || $sessionId === '{CHECKOUT_SESSION_ID}') {
+            Log::info('No valid session_id in URL — finding latest pending payment', [
+                'user_id' => $user->id,
+            ]);
+
+            $payment = Payment::where('user_id', $user->id)
+                ->where('status', 'pending')
+                ->where('payment_method', 'paymongo_checkout')
+                ->whereNotNull('paymongo_source_id')
+                ->latest()
+                ->first();
+
+            if (! $payment) {
+                return redirect()->route('student.account', ['tab' => 'history'])
+                    ->with('flash.info', 'Your payment is being processed. Please check the Payment History tab in a few minutes. If it doesn\'t appear after 10 minutes, contact accounting.');
+            }
+
+            $sessionId = $payment->paymongo_source_id;
+
+            Log::info('Found pending payment via user lookup', [
+                'payment_id' => $payment->id,
+                'session_id' => $sessionId,
+            ]);
+        }
+
         $payment = Payment::where('paymongo_source_id', $sessionId)->first();
 
         // ── FAST PATH: Already fully processed ───────────────────────────────
@@ -325,7 +345,6 @@ class PaymentController extends Controller
         }
 
         // ── CHECK IF TRANSACTION ALREADY RECORDED (webhook may have beaten us) ─
-        // Try to find via payment_intent_id stored in the Payment row's meta
         $paymentIntentId = $payment
             ? ($payment->paymongo_intent_id ?? $payment->meta['paymongo_intent_id'] ?? null)
             : null;
@@ -347,13 +366,11 @@ class PaymentController extends Controller
         }
 
         // ── ATTEMPT PAYMONGO API VERIFICATION (non-blocking) ─────────────────
-        // We try the API but do NOT let failure block the user.
-        // If API is unreachable, we rely on the webhook to record the payment.
-        $apiVerified   = false;
-        $sessionData   = null;
-        $sessionPaidAt = null;
+        $apiVerified    = false;
+        $sessionData    = null;
+        $sessionPaidAt  = null;
         $firstPmtStatus = null;
-        $intentStatus  = null;
+        $intentStatus   = null;
 
         try {
             $apiResponse = Http::withBasicAuth($this->secretKey, '')
@@ -368,7 +385,6 @@ class PaymentController extends Controller
                 $sessionPaidAt  = data_get($sessionData, 'attributes.paid_at');
                 $apiIntentId    = data_get($sessionData, 'attributes.payment_intent.id');
 
-                // Override paymentIntentId if we got a fresher value from the API
                 if ($apiIntentId && ! $paymentIntentId) {
                     $paymentIntentId = $apiIntentId;
                 }
@@ -378,14 +394,13 @@ class PaymentController extends Controller
                     || $sessionPaidAt !== null;
 
                 Log::info('PayMongo API verification result', [
-                    'session_id'      => $sessionId,
-                    'api_verified'    => $apiVerified,
-                    'intent_status'   => $intentStatus,
-                    'payment_status'  => $firstPmtStatus,
-                    'paid_at'         => $sessionPaidAt,
+                    'session_id'     => $sessionId,
+                    'api_verified'   => $apiVerified,
+                    'intent_status'  => $intentStatus,
+                    'payment_status' => $firstPmtStatus,
+                    'paid_at'        => $sessionPaidAt,
                 ]);
 
-                // Payment explicitly not paid — cancel and send back
                 if (! $apiVerified) {
                     if ($payment) {
                         $payment->update(['status' => 'cancelled']);
@@ -400,23 +415,19 @@ class PaymentController extends Controller
                 ]);
             }
         } catch (\Throwable $e) {
-            // API unreachable — log and continue. Webhook will handle recording.
             Log::warning('PayMongo API unreachable in success() — relying on webhook', [
                 'session_id' => $sessionId,
                 'error'      => $e->getMessage(),
             ]);
         }
 
-        // ── IF API IS UNREACHABLE AND NO LOCAL PAYMENT ROW ────────────────────
-        // We have no way to verify — show soft message.
+        // ── IF API UNREACHABLE AND NO LOCAL PAYMENT ROW ───────────────────────
         if (! $apiVerified && ! $payment) {
             return redirect()->route('student.account', ['tab' => 'history'])
                 ->with('flash.info', 'Your payment is being processed. Please check the Payment History tab in a few minutes. If it doesn\'t appear, contact accounting with reference: ' . $sessionId);
         }
 
         // ── IF API UNREACHABLE BUT LOCAL PAYMENT EXISTS ───────────────────────
-        // Student DID initiate a real payment session (we created the row in createCheckout).
-        // Trust that and show soft message — webhook will finalize the recording.
         if (! $apiVerified && $payment && $payment->status === 'pending') {
             Log::info('PayMongo API unreachable but local pending payment exists — showing processing message', [
                 'session_id' => $sessionId,
@@ -426,10 +437,7 @@ class PaymentController extends Controller
                 ->with('flash.info', 'Your payment is being processed. Please check the Payment History tab in a few minutes. If it doesn\'t appear after 10 minutes, contact accounting.');
         }
 
-        // ── API VERIFIED: RECORD THE TRANSACTION ──────────────────────────────
-        // We have positive confirmation from PayMongo. Record it now.
-
-        // Final idempotency check before writing
+        // ── API VERIFIED: RECORD THE TRANSACTION ─────────────────────────────
         if ($paymentIntentId) {
             $existingTxn = Transaction::where('reference', "PAY-{$paymentIntentId}")->first();
             if ($existingTxn) {
@@ -446,13 +454,12 @@ class PaymentController extends Controller
                 ->with('flash.success', 'Payment confirmed! Awaiting accounting verification.');
         }
 
-        // Build transaction from API data
         $amountInPesos = $sessionData
             ? (data_get($sessionData, 'attributes.amount') / 100)
             : (float) ($payment?->amount ?? 0);
 
-        $termId   = $payment?->meta['selected_term_id'] ?? null;
-        $termInfo = $termId ? StudentPaymentTerm::find($termId) : null;
+        $termId      = $payment?->meta['selected_term_id'] ?? null;
+        $termInfo    = $termId ? StudentPaymentTerm::find($termId) : null;
         $description = $sessionData
             ? (data_get($sessionData, 'attributes.description') ?? 'PayMongo Payment')
             : ($payment?->description ?? 'PayMongo Payment');
@@ -545,24 +552,16 @@ class PaymentController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  LEGACY API WEBHOOK (api.php references this — stub to prevent 500 errors)
-    //  The real webhook handler is PaymongoWebhookController::handle() via web.php
+    //  LEGACY API WEBHOOK
     // ─────────────────────────────────────────────────────────────────────────
 
     public function webhook(Request $request)
     {
-        // This route exists in api.php for legacy reasons.
-        // The authoritative webhook handler is POST /webhook/paymongo (web.php)
-        // which routes to PaymongoWebhookController::handle().
-        //
-        // This stub prevents a 500 response (which causes PayMongo to retry
-        // and eventually disable your webhook endpoint).
         Log::warning('PayMongo webhook hit legacy API route — configure PayMongo to use /webhook/paymongo instead', [
             'ip'         => $request->ip(),
             'event_type' => data_get($request->json()->all(), 'data.type'),
         ]);
 
-        // Forward to the real handler
         return app(\App\Http\Controllers\PaymongoWebhookController::class)->handle($request);
     }
 

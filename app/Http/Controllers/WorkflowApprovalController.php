@@ -59,20 +59,27 @@ class WorkflowApprovalController extends Controller
 
         $approval->load([
             'workflowInstance.workflow',
-            'workflowInstance.workflowable.user',   // ← eager-load user so template has student name
+            'workflowInstance.workflowable.user',
             'workflowInstance.approvals',
         ]);
 
         $transaction = $approval->workflowInstance->workflowable;
         $student     = null;
-        $unpaidTerms = null;
+        $unpaidTerms = collect();
+        $assessment  = null;
 
         if ($transaction instanceof \App\Models\Transaction && $transaction->user && $transaction->user->student) {
             $student = $transaction->user->student->load('user');
 
+            // ← DAGDAG: i-load ang assessment mula sa meta
+            $assessmentId = $transaction->meta['assessment_id'] ?? null;
+            if ($assessmentId) {
+                $assessment = \App\Models\StudentAssessment::find($assessmentId);
+            }
+
             $unpaidTerms = StudentPaymentTerm::whereHas('assessment', function ($q) use ($transaction) {
-                $q->where('user_id', $transaction->user_id);
-            })
+                    $q->where('user_id', $transaction->user_id);
+                })
                 ->whereIn('status', ['pending', 'partial'])
                 ->orderBy('due_date', 'asc')
                 ->get();
@@ -82,6 +89,7 @@ class WorkflowApprovalController extends Controller
             'approval'    => $approval,
             'student'     => $student,
             'unpaidTerms' => $unpaidTerms,
+            'assessment'  => $assessment, // ← DAGDAG
         ]);
     }
 
