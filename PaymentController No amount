@@ -192,8 +192,6 @@ class PaymentController extends Controller
         }
 
         // ── CREATE CHECKOUT SESSION ───────────────────────────────────────────
-        // Use static success/cancel URLs — session ID is stored in Payment record
-        // and looked up in success() via the user's latest pending payment.
         $response = Http::withBasicAuth($this->secretKey, '')
             ->timeout(20)
             ->post("{$this->baseUrl}/checkout_sessions", [
@@ -234,6 +232,9 @@ class PaymentController extends Controller
         $sessionId       = $session['id'];
         $paymentIntentId = data_get($session, 'attributes.payment_intent.id');
 
+        // ✅ FIX: Store 'amount' in both the column AND in meta as a backup.
+        // This ensures success() can always recover the correct amount even if
+        // the PayMongo API is unreachable and $sessionData comes back null.
         Payment::create([
             'user_id'               => $user->id,
             'student_assessment_id' => $termInfo?->student_assessment_id ?? null,
@@ -244,6 +245,7 @@ class PaymentController extends Controller
             'paymongo_source_id'    => $sessionId,
             'meta'                  => [
                 'payment_method'     => 'paymongo',
+                'amount'             => $validated['amount'], // ✅ ADDED: backup amount
                 'selected_term_id'   => $validated['selected_term_id'],
                 'term_name'          => $termInfo?->term_name ?? 'Payment',
                 'paymongo_checkout'  => true,
@@ -256,11 +258,12 @@ class PaymentController extends Controller
             $termInfo->update(['payment_intent_id' => $paymentIntentId]);
         }
 
-        Log::info('PayMongo payment_intent_id stored for webhook linkage', [
-            'payment_term_id'  => $termInfo?->id,
-            'user_id'          => $user->id,
+        Log::info('PayMongo checkout session created', [
+            'payment_term_id'   => $termInfo?->id,
+            'user_id'           => $user->id,
+            'amount'            => $validated['amount'],
             'payment_intent_id' => $paymentIntentId,
-            'session_id'       => $sessionId,
+            'session_id'        => $sessionId,
         ]);
 
         return response()->json([
@@ -282,7 +285,7 @@ class PaymentController extends Controller
             'auth_user'  => auth()->id(),
         ]);
 
-        // ✅ FIXED: auth check FIRST before using $user anywhere
+        // ✅ Auth check FIRST before using $user anywhere
         if (! auth()->check()) {
             Log::warning('PayMongo success: unauthenticated, saving intended URL', [
                 'session_id' => $sessionId,
@@ -292,11 +295,9 @@ class PaymentController extends Controller
                 ->with('flash.info', 'Please log in to complete your payment confirmation.');
         }
 
-        $user = auth()->user(); // ✅ FIXED: $user defined BEFORE it is used below
+        $user = auth()->user();
 
         // ── GUARD: missing or unsubstituted session ID ────────────────────────
-        // PayMongo does not substitute {CHECKOUT_SESSION_ID} in checkout sessions
-        // (only in Payment Links). So we look up the latest pending payment instead.
         if (! $sessionId || $sessionId === '{CHECKOUT_SESSION_ID}') {
             Log::info('No valid session_id in URL — finding latest pending payment', [
                 'user_id' => $user->id,
@@ -415,7 +416,7 @@ class PaymentController extends Controller
                 ]);
             }
         } catch (\Throwable $e) {
-            Log::warning('PayMongo API unreachable in success() — relying on webhook', [
+            Log::warning('PayMongo API unreachable in success() — relying on local Payment record', [
                 'session_id' => $sessionId,
                 'error'      => $e->getMessage(),
             ]);
@@ -437,7 +438,7 @@ class PaymentController extends Controller
                 ->with('flash.info', 'Your payment is being processed. Please check the Payment History tab in a few minutes. If it doesn\'t appear after 10 minutes, contact accounting.');
         }
 
-        // ── API VERIFIED: RECORD THE TRANSACTION ─────────────────────────────
+        // ── API VERIFIED: Check for duplicate transaction ─────────────────────
         if ($paymentIntentId) {
             $existingTxn = Transaction::where('reference', "PAY-{$paymentIntentId}")->first();
             if ($existingTxn) {
@@ -454,21 +455,59 @@ class PaymentController extends Controller
                 ->with('flash.success', 'Payment confirmed! Awaiting accounting verification.');
         }
 
-        $amountInPesos = $sessionData
-            ? (data_get($sessionData, 'attributes.amount') / 100)
-            : (float) ($payment?->amount ?? 0);
+        // ── RESOLVE AMOUNT from 3 sources in priority order ───────────────────
+        // Source 1: PayMongo API response (most authoritative)
+        // Source 2: Local Payment record amount column
+        // Source 3: Payment meta 'amount' key (backup we now store in createCheckout)
+        $amountInPesos = 0.0;
+
+        if ($sessionData) {
+            $amountInPesos = (float) (data_get($sessionData, 'attributes.amount') / 100);
+        }
+
+        if ($amountInPesos <= 0 && $payment?->amount > 0) {
+            $amountInPesos = (float) $payment->amount;
+        }
+
+        if ($amountInPesos <= 0 && isset($payment?->meta['amount']) && $payment->meta['amount'] > 0) {
+            $amountInPesos = (float) $payment->meta['amount'];
+        }
+
+        Log::info('PayMongo success: resolved amount', [
+            'session_id'        => $sessionId,
+            'amount_resolved'   => $amountInPesos,
+            'payment_col_amt'   => $payment?->amount,
+            'payment_meta_amt'  => $payment?->meta['amount'] ?? null,
+            'session_api_amt'   => $sessionData ? data_get($sessionData, 'attributes.amount') : null,
+        ]);
+
+        // ✅ HARD STOP: never record a ₱0.00 transaction — it causes broken
+        // approvals and wrong balance deductions downstream.
+        if ($amountInPesos <= 0) {
+            Log::error('PayMongo success: amount resolved to ₱0 — aborting transaction creation', [
+                'session_id'     => $sessionId,
+                'payment_id'     => $payment?->id,
+                'payment_amount' => $payment?->amount,
+                'payment_meta'   => $payment?->meta,
+            ]);
+            return redirect()->route('student.account', ['tab' => 'history'])
+                ->with('flash.warning', 'Payment amount could not be verified. Please contact accounting with reference: ' . $sessionId);
+        }
 
         $termId      = $payment?->meta['selected_term_id'] ?? null;
         $termInfo    = $termId ? StudentPaymentTerm::find($termId) : null;
+
+        // ✅ FIX: Use term_name as description/type so it shows correctly in history
+        $termName    = $termInfo?->term_name ?? ($payment?->meta['term_name'] ?? 'Payment');
         $description = $sessionData
-            ? (data_get($sessionData, 'attributes.description') ?? 'PayMongo Payment')
-            : ($payment?->description ?? 'PayMongo Payment');
+            ? (data_get($sessionData, 'attributes.description') ?? $termName)
+            : ($payment?->description ?? $termName);
 
         $transaction = null;
 
         DB::transaction(function () use (
             $payment, $user, $paymentIntentId, $sessionId,
-            $amountInPesos, $termId, $termInfo, $description, &$transaction
+            $amountInPesos, $termId, $termInfo, $termName, $description, &$transaction
         ) {
             if ($payment) {
                 $payment = Payment::lockForUpdate()->find($payment->id);
@@ -482,6 +521,7 @@ class PaymentController extends Controller
                     'session_id'        => $sessionId,
                     'payment_intent_id' => $paymentIntentId,
                     'user_id'           => $user->id,
+                    'amount'            => $amountInPesos,
                 ]);
                 Payment::create([
                     'user_id'            => $user->id,
@@ -493,13 +533,17 @@ class PaymentController extends Controller
                     'paymongo_intent_id' => $paymentIntentId,
                     'meta'               => [
                         'payment_method'    => 'paymongo',
+                        'amount'            => $amountInPesos,
                         'paymongo_checkout' => true,
                         'recovered'         => true,
                         'selected_term_id'  => $termId,
+                        'term_name'         => $termName,
                     ],
                 ]);
             }
 
+            // ✅ FIX: Use actual term_name as 'type' so Payment History shows
+            // "Prelim" / "Midterm" etc. instead of the generic "Payment" string.
             $transaction = Transaction::create([
                 'user_id'         => $user->id,
                 'kind'            => 'payment',
@@ -507,7 +551,7 @@ class PaymentController extends Controller
                 'payment_channel' => 'paymongo',
                 'amount'          => $amountInPesos,
                 'reference'       => "PAY-{$paymentIntentId}",
-                'type'            => 'Payment',
+                'type'            => $termName, // ✅ FIXED: was hardcoded 'Payment'
                 'paid_at'         => now(),
                 'year'            => now()->year,
                 'semester'        => $termInfo?->assessment?->semester ?? null,
@@ -515,7 +559,7 @@ class PaymentController extends Controller
                     'description'         => $description,
                     'paymongo_session_id' => $sessionId,
                     'paymongo_intent_id'  => $paymentIntentId,
-                    'term_name'           => $termInfo?->term_name ?? ($payment?->meta['term_name'] ?? 'Payment'),
+                    'term_name'           => $termName,
                     'selected_term_id'    => $termId,
                     'payment_method'      => 'paymongo',
                     'assessment_id'       => $termInfo?->student_assessment_id ?? null,
@@ -630,7 +674,7 @@ class PaymentController extends Controller
                 $transaction = Transaction::create([
                     'user_id'         => $user->id,
                     'kind'            => 'payment',
-                    'type'            => 'payment',
+                    'type'            => $term?->term_name ?? 'Payment',
                     'payment_channel' => 'bank_transfer',
                     'status'          => PaymentStatus::AWAITING_PROOF->value,
                     'amount'          => $validated['amount'],
@@ -771,13 +815,14 @@ class PaymentController extends Controller
                 return;
             }
 
-            $transaction = Transaction::findOrFail($transactionId);
+            $transaction = Transaction::with(['user'])->findOrFail($transactionId);
             app(\App\Services\WorkflowService::class)->startWorkflow($workflow, $transaction, $userId);
 
         } catch (\Throwable $e) {
             Log::error('Payment approval workflow start failed (transaction safe)', [
                 'transaction_id' => $transactionId,
                 'error'          => $e->getMessage(),
+                'trace'          => $e->getTraceAsString(),
             ]);
         }
     }
@@ -790,4 +835,3 @@ class PaymentController extends Controller
             : ['card'];
     }
 }
-
